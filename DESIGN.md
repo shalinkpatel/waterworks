@@ -159,8 +159,11 @@ uses endpoint credentials supplied by the environment. Credentials are kept in
 memory, never added to the transcript. The socket reconnects with the same
 endpoint identity. Supported messages are injected with `pi.sendMessage()` using
 `steer` delivery and acknowledged after Pi accepts them into the session;
-acknowledgement does not mean the model finished working. Unsupported types
-receive `core.error.v1` without invoking the model. Dashboard comments are
+acknowledgement does not mean the model finished working. Only dashboard
+comments, errors, echoes, and messages with `payload.delivery: "immediate"` do
+this; every other message stays unacknowledged in an in-session inbox (so a
+restart redelivers it) until the model calls `ww_inbox`, which returns and
+acknowledges them. The footer shows the queued count. Dashboard comments are
 accepted only from dashboards the session opened or published to (others get
 `core.error.v1 {error: "unknown_dashboard"}`), and page-derived comment fields are
 presented to the model as untrusted data. The model sends structured
