@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Live fleet</title>
+<script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
+<style>
+  :root { --text: #111827; --muted: #6b7280; --line: #e5e7eb; --subtle: #f9fafb; --brand: #2563eb; --danger: #dc2626; }
+  body { margin: 0; padding: 32px 40px 64px; font: 15px/1.5 Inter, -apple-system, system-ui, sans-serif; color: var(--text); background: white; }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 36px 0 10px; }
+  .lede { color: var(--muted); margin: 0 0 24px; max-width: 760px; }
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 12px; max-width: 900px; }
+  .stat { border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; background: var(--subtle); }
+  .stat span { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat b { font: 600 26px "Geist Mono", ui-monospace, monospace; }
+  .stat.alert { border-color: var(--danger); }
+  .stat.alert b { color: var(--danger); }
+  /* vega-embed makes its target inline-block; "container" width needs an explicit width. */
+  .chart { width: 100%; max-width: 900px; }
+  table { border-collapse: collapse; min-width: 560px; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 14px 6px 0; border-bottom: 1px solid var(--line); }
+  td.num { font-family: "Geist Mono", ui-monospace, monospace; }
+  tr.alert td { color: var(--danger); font-weight: 600; }
+  #notes { padding-left: 18px; max-width: 760px; }
+  #notes li { margin: 6px 0; }
+  .dim { color: var(--muted); }
+  .about { color: var(--brand); font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Live fleet</h1>
+<p class="lede">Simulated latency streaming in once a second. Every minute us-east-1 has a 10 second p99 incident.
+Use <b>Comment area</b> to drag over anything, or <b>Select element</b> to click one (↑ widens to its parent),
+and say what you see: the agent replies in the sidebar and pins a note below.</p>
+
+<div class="stats">
+  <div class="stat" id="stat-qps"><span>Requests / s</span><b>–</b></div>
+  <div class="stat" id="stat-p50"><span>p50 latency</span><b>–</b></div>
+  <div class="stat" id="stat-p99"><span>p99 latency</span><b>–</b></div>
+  <div class="stat" id="stat-errors"><span>Error rate</span><b>–</b></div>
+</div>
+
+<h2>Latency (last 2 minutes)</h2>
+<div id="latency" class="chart"></div>
+
+<h2>Throughput by region</h2>
+<div id="throughput" class="chart"></div>
+
+<h2>Regions</h2>
+<table id="regions">
+  <thead><tr><th>Region</th><th>Requests / s</th><th>p50 ms</th><th>p99 ms</th></tr></thead>
+  <tbody><tr><td colspan="4" class="dim">Waiting for data…</td></tr></tbody>
+</table>
+
+<h2>Agent notes</h2>
+<ul id="notes"><li class="dim">No notes yet. Comment on something.</li></ul>
+
+<script>
+  const WINDOW = 120;
+  const axis = { labelColor: "#6b7280", titleColor: "#6b7280", gridColor: "#f3f4f6", domainColor: "#e5e7eb" };
+  const config = { background: null, view: { stroke: null }, axis, legend: { orient: "bottom", title: null, labelColor: "#6b7280" },
+                   range: { category: ["#16a34a", "#2563eb", "#d97706", "#dc2626", "#7c3aed"] } };
+  const views = {};
+
+  vegaEmbed("#latency", {
+    $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+    width: "container", height: 220, data: { name: "latency" },
+    mark: { type: "line", interpolate: "monotone", strokeWidth: 2 },
+    encoding: {
+      x: { field: "t", type: "quantitative", title: "seconds" },
+      y: { field: "ms", type: "quantitative", title: "ms" },
+      color: { field: "series", type: "nominal" },
+    },
+    config,
+  }, { actions: false }).then((r) => (views.latency = r.view));
+
+  vegaEmbed("#throughput", {
+    $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+    width: "container", height: 180, data: { name: "regions" },
+    mark: { type: "bar", cornerRadiusEnd: 3 },
+    encoding: {
+      y: { field: "name", type: "nominal", title: null, sort: "-x" },
+      x: { field: "qps", type: "quantitative", title: "requests / s" },
+      color: { condition: { test: "datum.p99 > 400", value: "#dc2626" }, value: "#16a34a" },
+    },
+    config,
+  }, { actions: false }).then((r) => (views.throughput = r.view));
+
+  const pending = [];
+  const set = (id, value, alert) => {
+    const el = document.getElementById(id);
+    el.querySelector("b").textContent = value;
+    el.classList.toggle("alert", Boolean(alert));
+  };
+
+  function tick(d) {
+    set("stat-qps", d.qps.toLocaleString());
+    set("stat-p50", `${d.p50} ms`);
+    set("stat-p99", `${d.p99} ms`, d.p99 > 400);
+    set("stat-errors", `${d.errors.toFixed(2)}%`, d.errors > 1);
+    document.querySelector("#regions tbody").replaceChildren(...d.regions.map((r) => {
+      const row = document.createElement("tr");
+      if (r.p99 > 400) row.className = "alert";
+      for (const [value, num] of [[r.name], [r.qps, 1], [r.p50, 1], [r.p99, 1]]) {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        if (num) cell.className = "num";
+        row.append(cell);
+      }
+      return row;
+    }));
+    if (views.latency) {
+      views.latency.change("latency", vega.changeset()
+        .insert([{ t: d.t, ms: d.p50, series: "p50" }, { t: d.t, ms: d.p99, series: "p99" }])
+        .remove((p) => p.t <= d.t - WINDOW)).run();
+    } else {
+      pending.push(d); // charts still loading from the CDN
+    }
+    if (views.throughput) {
+      views.throughput.change("regions", vega.changeset().remove(() => true).insert(d.regions)).run();
+    }
+  }
+
+  function note(n) {
+    const list = document.getElementById("notes");
+    list.querySelector(".dim")?.remove();
+    const item = document.createElement("li");
+    const about = document.createElement("span");
+    about.className = "about";
+    about.textContent = n.about ? `${n.about}: ` : "";
+    item.append(about, document.createTextNode(n.text));
+    list.prepend(item);
+  }
+
+  // Streamed by the agent with dashboard.data.v1 and replayed after a reload.
+  addEventListener("waterworks", (event) => {
+    const d = event.detail;
+    if (d.kind === "tick") tick(d);
+    else if (d.kind === "note") note(d);
+  });
+
+  // Ticks that arrived before the charts loaded.
+  const flush = setInterval(() => {
+    if (!views.latency) return;
+    clearInterval(flush);
+    const rows = pending.splice(0).slice(-WINDOW).flatMap((d) => [
+      { t: d.t, ms: d.p50, series: "p50" }, { t: d.t, ms: d.p99, series: "p99" },
+    ]);
+    views.latency.change("latency", vega.changeset().insert(rows)).run();
+  }, 200);
+</script>
+</body>
+</html>
