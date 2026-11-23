@@ -10,7 +10,7 @@ See [DESIGN.md](DESIGN.md) for the protocol and delivery model.
 Waterworks is inspired by David Crespo's [ah](https://github.com/david-crespo/ah)
 ("agent host"), which showed how small web tools can talk back to a running
 coding agent. Waterworks generalizes that idea into a mailbox for any agent or
-tool, with live, commentable dashboards on top.
+tool. Live, commentable dashboards are included as one example tool built on it.
 
 ## Build
 
@@ -114,92 +114,6 @@ and runs a small responder that answers comments in the sidebar and pins notes
 into the page. Edit `scripts/demo/page.html` while it runs: each save is
 published live as a delta. The script prints how to connect a real Pi agent to
 the same daemon. Needs `curl`, `jq`, and `openssl`; the charts load from a CDN.
-
-## Live dashboards
-
-A dashboard is a tool endpoint rendered at `/dashboard`. Create one and open the
-printed URL; its credentials ride in the URL fragment, which the browser never
-sends to the server, and the page moves them into tab storage:
-
-```sh
-export WW_ADMIN_TOKEN='<your-local-admin-token>'
-./ww dashboard --title "Fleet health"
-```
-
-### Page mode (HTML reports)
-
-Publish any self-contained HTML page: inline data, Vega-Lite or other CDN scripts,
-your own JS. Each publish replaces the page live and bumps its version chip:
-
-```sh
-./ww publish --to <dashboard-id> --file report.html --watch   # republish on every save
-```
-
-Pages run in a sandboxed frame with an opaque origin (`sandbox allow-scripts
-allow-popups allow-popups-to-escape-sandbox`): scripts and CDNs work, links may
-open ordinary (unsandboxed) tabs, but the page
-cannot reach the dashboard's token, storage, or the authenticated API. Stream data
-into a running page without a reload by sending `dashboard.data.v1 {any}`:
-
-```js
-addEventListener("waterworks", (event) => update(event.detail));
-```
-
-Data sent since the last publish is replayed after a reload. Pages may be up to
-16 MB.
-
-Republishing sends a delta when that is less than half the page:
-`dashboard.delta.v1 {base, ops, title?}`, where `base` is the message ID of the
-version it edits and `ops` are line edits that consume the whole base:
-`{keep: n}`, `{drop: n}`, `{insert: [lines]}`. `ww publish --watch` diffs with
-Myers (one edit to a 3 MB page sent 174 bytes); Pi's `ww_dashboard_publish` sends
-the changed span. A delta whose base is not the current page is refused: the page
-keeps its version, shows "missed an update", and replies `core.error.v1
-{error: "delta_base_mismatch"}` to the sender, after which Pi publishes the full
-page. Deltas are line-based, so keep large embedded data on many lines, or stream
-it with `dashboard.data.v1`. Comments on a page carry `context`: the section heading, the visible
-text, and the element ids under the region (or your text selection inside the
-page).
-
-### Panel mode
-
-Without writing HTML, any endpoint can stream structured panels:
-
-| Type | Payload |
-| --- | --- |
-| `dashboard.render.v1` | `{title, panels}` replaces the page (`{title?, html}` for page mode) |
-| `dashboard.delta.v1` | page mode: `{base, ops, title?}` edits the current page's lines |
-| `dashboard.patch.v1` | `{title?, panels?, remove?, append?}`: upsert panels by `id`, remove ids, append `[x, y]` points to line series |
-| `dashboard.reply.v1` | `{text}` with `reply_to` set to a comment's ID |
-
-Panels are `{id, kind, title, width?}` where `width` spans 1–4 columns and
-`kind` is one of `stat {value, unit?, delta?}`, `line {series: [{name, points}]}`,
-`bar {bars: [{label, value}]}`, `table {columns, rows}`, or `text {text}`. Line
-series keep at most 500 points. Agent content is rendered as text, never HTML.
-
-To give feedback, use **Comment area** to drag a rectangle (or select text
-first, or press Enter for the whole dashboard), or **Select element** to click
-one: hover outlines it, ↑/↓ widen to its parent or narrow back, and a click or
-Enter picks what is outlined. On published pages the picker runs inside the
-sandboxed frame. The selection stays highlighted while you write; once sent it
-remains as a hatched, numbered marker, and element markers follow their element
-across republishes, deltas, and relayouts. The page sends
-`dashboard.comment.v1` to the endpoint that last rendered it:
-
-```json
-{"text": "...", "region": {"x": 0.1, "y": 0, "width": 0.3, "height": 0.2},
- "panels": [{"id": "qps", "title": "QPS", "kind": "stat"}],
- "selection": "", "dashboard": {"title": "...", "sequence": 7}}
-```
-
-`region` is a fraction of the dashboard; page-mode comments add
-`context: {heading, text, ids, selection}` and `dashboard.version`, and picked
-elements add `element: {selector, tag, id, classes, text}` (plus `panel` in panel
-mode). Replies appear under the comment. The agent removes markers once it has
-addressed them with `dashboard.clear.v1 {comments: [ids]}` or `{all: true}`
-(comments made before the clear); the comment stays in the sidebar as "cleared
-by agent". A reload rebuilds the page, clears included, from the endpoint's
-mailbox history.
 
 ## Pi adapter
 
@@ -326,6 +240,94 @@ Send a message over the socket with `op: "send"`:
   "reply_to": null
 }
 ```
+
+## Example tool: live dashboards
+
+Dashboards are one tool built on the mailbox primitives above, not part of the core. Any tool can be built the same way: register an endpoint, accept and emit typed messages.
+
+A dashboard is a tool endpoint rendered at `/dashboard`. Create one and open the
+printed URL; its credentials ride in the URL fragment, which the browser never
+sends to the server, and the page moves them into tab storage:
+
+```sh
+export WW_ADMIN_TOKEN='<your-local-admin-token>'
+./ww dashboard --title "Fleet health"
+```
+
+### Page mode (HTML reports)
+
+Publish any self-contained HTML page: inline data, Vega-Lite or other CDN scripts,
+your own JS. Each publish replaces the page live and bumps its version chip:
+
+```sh
+./ww publish --to <dashboard-id> --file report.html --watch   # republish on every save
+```
+
+Pages run in a sandboxed frame with an opaque origin (`sandbox allow-scripts
+allow-popups allow-popups-to-escape-sandbox`): scripts and CDNs work, links may
+open ordinary (unsandboxed) tabs, but the page
+cannot reach the dashboard's token, storage, or the authenticated API. Stream data
+into a running page without a reload by sending `dashboard.data.v1 {any}`:
+
+```js
+addEventListener("waterworks", (event) => update(event.detail));
+```
+
+Data sent since the last publish is replayed after a reload. Pages may be up to
+16 MB.
+
+Republishing sends a delta when that is less than half the page:
+`dashboard.delta.v1 {base, ops, title?}`, where `base` is the message ID of the
+version it edits and `ops` are line edits that consume the whole base:
+`{keep: n}`, `{drop: n}`, `{insert: [lines]}`. `ww publish --watch` diffs with
+Myers (one edit to a 3 MB page sent 174 bytes); Pi's `ww_dashboard_publish` sends
+the changed span. A delta whose base is not the current page is refused: the page
+keeps its version, shows "missed an update", and replies `core.error.v1
+{error: "delta_base_mismatch"}` to the sender, after which Pi publishes the full
+page. Deltas are line-based, so keep large embedded data on many lines, or stream
+it with `dashboard.data.v1`. Comments on a page carry `context`: the section heading, the visible
+text, and the element ids under the region (or your text selection inside the
+page).
+
+### Panel mode
+
+Without writing HTML, any endpoint can stream structured panels:
+
+| Type | Payload |
+| --- | --- |
+| `dashboard.render.v1` | `{title, panels}` replaces the page (`{title?, html}` for page mode) |
+| `dashboard.delta.v1` | page mode: `{base, ops, title?}` edits the current page's lines |
+| `dashboard.patch.v1` | `{title?, panels?, remove?, append?}`: upsert panels by `id`, remove ids, append `[x, y]` points to line series |
+| `dashboard.reply.v1` | `{text}` with `reply_to` set to a comment's ID |
+
+Panels are `{id, kind, title, width?}` where `width` spans 1–4 columns and
+`kind` is one of `stat {value, unit?, delta?}`, `line {series: [{name, points}]}`,
+`bar {bars: [{label, value}]}`, `table {columns, rows}`, or `text {text}`. Line
+series keep at most 500 points. Agent content is rendered as text, never HTML.
+
+To give feedback, use **Comment area** to drag a rectangle (or select text
+first, or press Enter for the whole dashboard), or **Select element** to click
+one: hover outlines it, ↑/↓ widen to its parent or narrow back, and a click or
+Enter picks what is outlined. On published pages the picker runs inside the
+sandboxed frame. The selection stays highlighted while you write; once sent it
+remains as a hatched, numbered marker, and element markers follow their element
+across republishes, deltas, and relayouts. The page sends
+`dashboard.comment.v1` to the endpoint that last rendered it:
+
+```json
+{"text": "...", "region": {"x": 0.1, "y": 0, "width": 0.3, "height": 0.2},
+ "panels": [{"id": "qps", "title": "QPS", "kind": "stat"}],
+ "selection": "", "dashboard": {"title": "...", "sequence": 7}}
+```
+
+`region` is a fraction of the dashboard; page-mode comments add
+`context: {heading, text, ids, selection}` and `dashboard.version`, and picked
+elements add `element: {selector, tag, id, classes, text}` (plus `panel` in panel
+mode). Replies appear under the comment. The agent removes markers once it has
+addressed them with `dashboard.clear.v1 {comments: [ids]}` or `{all: true}`
+(comments made before the clear); the comment stays in the sidebar as "cleared
+by agent". A reload rebuilds the page, clears included, from the endpoint's
+mailbox history.
 
 ## Tests
 

@@ -104,7 +104,54 @@ reconnects there. During a network partition, both sides can allocate the same
 mailbox sequence or accept conflicting writes; ordering is guaranteed only while
 the relevant replicas remain connected.
 
-## Live dashboards
+## Pi adapter
+
+`.pi/extensions/waterworks.js` registers one agent endpoint per Pi session or
+uses endpoint credentials supplied by the environment. Credentials are kept in
+memory, never added to the transcript. The socket reconnects with the same
+endpoint identity. Supported messages are injected with `pi.sendMessage()` using
+`steer` delivery and acknowledged after Pi accepts them into the session;
+acknowledgement does not mean the model finished working. Only dashboard
+comments, errors, echoes, and messages with `payload.delivery: "immediate"` do
+this; every other message stays unacknowledged in an in-session inbox (so a
+restart redelivers it) until the model calls `ww_inbox`, which returns and
+acknowledges them. The footer shows the queued count. Dashboard comments are
+accepted only from dashboards the session opened or published to (others get
+`core.error.v1 {error: "unknown_dashboard"}`), and page-derived comment fields are
+presented to the model as untrusted data. The model sends structured
+replies through the extension's `ww_send` tool and discovers peers through
+`ww_discover`.
+
+## OTP and distribution
+
+The application supervision tree contains a cluster-scoped `:pg` process and a
+`DynamicSupervisor` for mailbox processes. `Ww.Store` owns Mnesia operations;
+`Ww.Mailbox` owns live subscriptions; `Ww` is the small public API. Mailbox
+processes use `:global` names, which assume a connected full-mesh cluster;
+concurrent cross-node takeover can make OTP log and resolve a name conflict.
+
+Before application startup, the first node creates a disk-backed Mnesia schema
+and replicated table definitions. A joining node connects to an existing node,
+obtains the remote schema through `extra_db_nodes`, changes its schema to disk
+copies, and adds local disk copies of the Waterworks tables. Nodes use long names
+when connecting across hosts. The shared cookie lives in `~/.erlang.cookie`
+(mode 0400) on each host; Waterworks never creates it or writes it anywhere.
+
+Mnesia and Erlang distribution do not make a partitioned cluster linearizable.
+Without majority checks, both sides can accept writes. Mnesia does not
+automatically merge diverged replicas after reconnect: an operator must choose
+the authoritative side and restart/resynchronize the losers. Every admitted
+node is fully trusted and can read or modify all Waterworks data. Waterworks
+v0.1 therefore targets a small, trusted, connected cluster, not Byzantine nodes
+or WAN consensus.
+
+The `disc_copies` tables retain all history in RAM as well as on disk. Retention,
+large-payload storage, automatic partition recovery, and stronger ownership are
+intentionally deferred until actual operating requirements justify them.
+
+## Example tool: live dashboards
+
+Dashboards are one tool built on the mailbox primitives above, not part of the core. Any tool can be built the same way: register an endpoint, accept and emit typed messages.
 
 A dashboard is an ordinary tool endpoint whose page is served at `/dashboard`.
 Its state is a pure fold over its mailbox (`priv/dashboard/core.js`):
@@ -151,51 +198,6 @@ the sender, with an ID derived from the delta so history replays do not repeat
 it. Publishers diff against their own last publish; one publisher per dashboard
 is the expected case, and a mismatch is the signal to send a full page. The
 router still treats deltas as opaque payloads.
-
-## Pi adapter
-
-`.pi/extensions/waterworks.js` registers one agent endpoint per Pi session or
-uses endpoint credentials supplied by the environment. Credentials are kept in
-memory, never added to the transcript. The socket reconnects with the same
-endpoint identity. Supported messages are injected with `pi.sendMessage()` using
-`steer` delivery and acknowledged after Pi accepts them into the session;
-acknowledgement does not mean the model finished working. Only dashboard
-comments, errors, echoes, and messages with `payload.delivery: "immediate"` do
-this; every other message stays unacknowledged in an in-session inbox (so a
-restart redelivers it) until the model calls `ww_inbox`, which returns and
-acknowledges them. The footer shows the queued count. Dashboard comments are
-accepted only from dashboards the session opened or published to (others get
-`core.error.v1 {error: "unknown_dashboard"}`), and page-derived comment fields are
-presented to the model as untrusted data. The model sends structured
-replies through the extension's `ww_send` tool and discovers peers through
-`ww_discover`.
-
-## OTP and distribution
-
-The application supervision tree contains a cluster-scoped `:pg` process and a
-`DynamicSupervisor` for mailbox processes. `Ww.Store` owns Mnesia operations;
-`Ww.Mailbox` owns live subscriptions; `Ww` is the small public API. Mailbox
-processes use `:global` names, which assume a connected full-mesh cluster;
-concurrent cross-node takeover can make OTP log and resolve a name conflict.
-
-Before application startup, the first node creates a disk-backed Mnesia schema
-and replicated table definitions. A joining node connects to an existing node,
-obtains the remote schema through `extra_db_nodes`, changes its schema to disk
-copies, and adds local disk copies of the Waterworks tables. Nodes use long names
-when connecting across hosts. The shared cookie lives in `~/.erlang.cookie`
-(mode 0400) on each host; Waterworks never creates it or writes it anywhere.
-
-Mnesia and Erlang distribution do not make a partitioned cluster linearizable.
-Without majority checks, both sides can accept writes. Mnesia does not
-automatically merge diverged replicas after reconnect: an operator must choose
-the authoritative side and restart/resynchronize the losers. Every admitted
-node is fully trusted and can read or modify all Waterworks data. Waterworks
-v0.1 therefore targets a small, trusted, connected cluster, not Byzantine nodes
-or WAN consensus.
-
-The `disc_copies` tables retain all history in RAM as well as on disk. Retention,
-large-payload storage, automatic partition recovery, and stronger ownership are
-intentionally deferred until actual operating requirements justify them.
 
 ## Evolution
 
