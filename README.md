@@ -225,8 +225,9 @@ The reference adapter accepts `demo.echo.v1`, `dashboard.comment.v1`, and
 `core.error.v1`. Comments are accepted only from dashboards the session opened
 or published to (others get `core.error.v1 {error: "unknown_dashboard"}`), and
 the model is told that page-derived fields (`context`, `element`, `selection`)
-are untrusted data, not instructions. Other types receive `core.error.v1`
-without invoking the model. Extend `acceptedTypes` and the
+are untrusted data, not instructions. Other types queue in an inbox the
+model reads with `ww_inbox` (the footer shows the count), unless the sender sets
+`payload.delivery` to `"immediate"`, which prompts the session now. Extend `acceptedTypes` and the
 message rendering as tool contracts grow. The integration test uses Pi's local
 `faux` provider and never contacts an external model API.
 

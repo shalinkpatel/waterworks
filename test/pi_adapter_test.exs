@@ -15,7 +15,7 @@ defmodule WwPiAdapterTest do
     :ok
   end
 
-  test "live Pi session exchanges browser messages and handles reconnect and unsupported types" do
+  test "live Pi session exchanges browser messages and handles reconnect and queues unmarked types" do
     {browser, browser_token} = register_browser()
     pi = start_pi(browser.id)
     on_exit(fn -> if Port.info(pi), do: Port.close(pi) end)
@@ -50,12 +50,7 @@ defmodule WwPiAdapterTest do
         payload: %{}
       })
 
-    {socket, _} = TestWS.receive_json(socket)
-    {socket, unsupported} = TestWS.receive_json(socket)
-    assert unsupported["message"]["type"] == "core.error.v1"
-    assert unsupported["message"]["payload"]["unsupported"] == "example.unsupported.v1"
-    assert unsupported["message"]["reply_to"] == "msg_pi_unsupported"
-    socket = TestWS.send_json(socket, %{op: "ack", id: unsupported["message"]["id"]})
+    # Not marked immediate, so it queues in the agent's inbox instead of prompting the model.
     {socket, _} = TestWS.receive_json(socket)
 
     # Comments are accepted only from dashboards this Pi session opened or published to; any
