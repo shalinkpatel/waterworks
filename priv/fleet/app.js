@@ -23,7 +23,7 @@ function apply(state) {
   pending.delete("remove_offline");
   endpoints = state.endpoints;
   updated = `updated ${localTime(state.updated)}`;
-  fleetId = state.fleet || fleetId;
+  if (!socket) fleetId = state.fleet || fleetId; // standalone: the fleet id comes from the URL only
   broadcasts = Array.isArray(state.broadcasts) ? state.broadcasts : broadcasts;
   // Keep an open receipts modal current from the broadcast history.
   const open = broadcasts.find((b) => b.broadcast === receipt);
@@ -296,7 +296,14 @@ $("theme").onclick = () => {
 };
 
 $("q").oninput = render;
-addEventListener("waterworks", (e) => (e.detail?.broadcast_status ? showReceipts(e.detail.broadcast_status) : apply(e.detail)));
+// Messages from the fleet, standalone or (in a canvas) unwrapped from canvas.data.v1 {reply}.
+function receive(type, payload) {
+  if (type === "fleet.state.v1") apply(payload);
+  if (type === "fleet.broadcast_status.v1") showReceipts(payload);
+}
+
+// In a canvas: state as canvas.data.v1; other messages (receipts, errors) as {reply: {type, payload}}.
+addEventListener("waterworks", (e) => (e.detail?.reply ? receive(e.detail.reply.type, e.detail.reply.payload) : apply(e.detail)));
 
 // Standalone: the URL fragment (never sent to the server) carries this viewer's credentials.
 const params = new URLSearchParams(location.hash.slice(1));
@@ -321,9 +328,10 @@ if (params.get("endpoint") && params.get("token")) {
       const frame = JSON.parse(data);
       if (frame.op !== "message") return;
       ws.send(JSON.stringify({ op: "ack", id: frame.message.id }));
-      if (frame.message.type === "fleet.state.v1") apply(frame.message.payload);
-      if (frame.message.type === "fleet.broadcast_status.v1") showReceipts(frame.message.payload);
-      if (frame.message.type === "core.shutdown.v1") stop("shut down");
+      // Anyone can message this view's endpoint; only the fleet it belongs to is trusted.
+      if (frame.message.from !== fleetId) return;
+      if (frame.message.type === "core.shutdown.v1") return stop("shut down");
+      receive(frame.message.type, frame.message.payload);
     };
     ws.onclose = (event) => {
       socket = null;

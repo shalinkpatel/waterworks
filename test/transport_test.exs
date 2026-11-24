@@ -1,18 +1,9 @@
 defmodule WwTransportTest do
-  use ExUnit.Case, async: false
+  use Ww.TransportCase, async: false
 
-  alias Ww.{TestHTTP, TestWS}
+  alias Ww.TestWS
 
-  @moduletag :transport
   @admin "test-admin-token"
-
-  setup do
-    Enum.each([:ww_messages, :ww_counters, :ww_endpoints], fn table ->
-      {:atomic, :ok} = :mnesia.clear_table(table)
-    end)
-
-    :ok
-  end
 
   test "HTTP registration, inspection, discovery, and authentication" do
     assert {200, %{"ok" => true}} = TestHTTP.request(:get, "/v1/health")

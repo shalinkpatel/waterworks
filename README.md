@@ -351,16 +351,18 @@ of its own mailbox, so it shows as online and acts on requests immediately. It n
   # ww_send to the fleet: fleet.subscribe.v1 {"to": "<canvas id>"}
   ```
 
-Messages: `fleet.subscribe.v1 {to?}` (yourself, or a canvas), `fleet.unsubscribe.v1
-{to?}`, and, from subscribers only, `fleet.remove.v1 {id}` (offline endpoints),
+Messages: `fleet.subscribe.v1 {to?}` (anyone may watch: yourself, or a canvas),
+`fleet.unsubscribe.v1 {to?}`, and, only from the user (the fleet's own view or a
+canvas subscribed to it), `fleet.remove.v1 {id}` (offline endpoints),
 `fleet.disconnect.v1 {id}` (online: deregisters it and closes its socket), and
 `fleet.shutdown.v1 {id}` (online: sends it `core.shutdown.v1`). A subscribed canvas
-sends the same as `canvas.action.v1 {action, id}`. Subscribers receive `fleet.state.v1` (canvases:
+sends the same as `canvas.action.v1 {action, id}`. Anything else, or a request
+from someone else, is answered with `core.error.v1`. Subscribers receive `fleet.state.v1` (canvases:
 `canvas.data.v1`) with `{fleet, endpoints: [{name, kind, type, status, id, kept}],
 broadcasts, updated (UTC ISO 8601)}`; `kept` marks subscribers that "Remove all
 offline" leaves alone. Offline rows have Remove; online rows have Shut down and Disconnect (click twice
 to confirm). **Remove all offline** in the toolbar (`fleet.remove_offline.v1`) clears
-every offline endpoint except the fleet's current subscribers, such as its viewer. Shutting the fleet down from its own row (or sending it
+every offline endpoint except the fleet's current subscribers, such as its viewer. Shutting the fleet down from its own row (or anyone sending it
 `core.shutdown.v1`) deregisters the fleet and its viewer and exits.
 
 **Broadcast** (standalone view, or the view published into a canvas): tick online agents, type a message, and Send

@@ -6,6 +6,7 @@ defmodule Ww.Log.Entry do
 
   @types ~w(BIGINT DOUBLE VARCHAR BOOLEAN)
   @max_rows 100_000
+  def max_rows, do: @max_rows
   # A whole message is at most 16 MB; base64 Parquet is a third larger than the file.
   @max_file 16_000_000
 
@@ -77,12 +78,7 @@ defmodule Ww.Log.Entry do
   def tags(_), do: {:error, "tags must be a list"}
 
   defp links(list) when is_list(list) and length(list) <= 20 do
-    Enum.reduce_while(list, {:ok, []}, fn link, {:ok, acc} ->
-      case link(link) do
-        {:ok, l} -> {:cont, {:ok, acc ++ [l]}}
-        error -> {:halt, error}
-      end
-    end)
+    collect(list, &link/1)
   end
 
   defp links(_), do: {:error, "links must be a list of up to 20"}
@@ -119,12 +115,7 @@ defmodule Ww.Log.Entry do
     if length(names) != length(Enum.uniq(names)) do
       {:error, "table names must be unique"}
     else
-      Enum.reduce_while(list, {:ok, []}, fn t, {:ok, acc} ->
-        case table(t) do
-          {:ok, table} -> {:cont, {:ok, acc ++ [table]}}
-          error -> {:halt, error}
-        end
-      end)
+      collect(list, &table/1)
     end
   end
 
@@ -276,6 +267,20 @@ defmodule Ww.Log.Entry do
   defp coerce(v, "VARCHAR") when is_binary(v), do: v
   defp coerce(v, "VARCHAR"), do: Jason.encode!(v)
   defp coerce(_, _), do: :invalid
+
+  @doc "Maps each item with `fun` (`{:ok, x}` or an error), stopping at the first error."
+  def collect(list, fun) do
+    Enum.reduce_while(list, {:ok, []}, fn item, {:ok, acc} ->
+      case fun.(item) do
+        {:ok, x} -> {:cont, {:ok, [x | acc]}}
+        error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, items} -> {:ok, Enum.reverse(items)}
+      error -> error
+    end
+  end
 
   defp check(true, _), do: :ok
   defp check(false, message), do: {:error, message}

@@ -91,8 +91,8 @@ defmodule WwWeb.Router do
   end
 
   get "/v1/endpoints/:id/tail" do
-    case Ww.inspect_endpoint(id, bearer_token(conn), id) do
-      {:ok, _} -> WwWeb.Tail.stream(conn, id)
+    case Ww.authenticate(id, bearer_token(conn)) do
+      :ok -> WwWeb.Tail.stream(conn, id)
       {:error, reason} -> error(conn, reason)
     end
   end
@@ -100,8 +100,8 @@ defmodule WwWeb.Router do
   get "/v1/endpoints/:id/socket" do
     token = bearer_token(conn) || subprotocol_token(conn)
 
-    case Ww.inspect_endpoint(id, token, id) do
-      {:ok, _} ->
+    case Ww.authenticate(id, token) do
+      :ok ->
         conn =
           if "ww" in websocket_protocols(conn),
             do: put_resp_header(conn, "sec-websocket-protocol", "ww"),
