@@ -1,6 +1,8 @@
 defmodule Ww.CLI do
   @moduledoc false
 
+  alias Ww.Tool
+
   def main(args) do
     case args do
       ["serve" | rest] ->
@@ -21,19 +23,16 @@ defmodule Ww.CLI do
   end
 
   defp serve(args) do
-    {opts, _, invalid} =
-      OptionParser.parse(args,
-        switches: [
-          name: :string,
-          join: :string,
-          port: :integer,
-          bind: :string,
-          mnesia_dir: :string,
-          allow_host: :keep
-        ]
+    opts =
+      parse!(args,
+        name: :string,
+        join: :string,
+        port: :integer,
+        bind: :string,
+        mnesia_dir: :string,
+        allow_host: :keep
       )
 
-    if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
     if name = opts[:name], do: start_distribution(name)
 
     admin_token = System.get_env("WW_ADMIN_TOKEN")
@@ -65,12 +64,8 @@ defmodule Ww.CLI do
   end
 
   defp client("register", args) do
-    {opts, _, invalid} =
-      OptionParser.parse(args,
-        switches: [kind: :string, name: :string, accepts: :keep, emits: :keep, metadata: :keep]
-      )
-
-    if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
+    opts =
+      parse!(args, kind: :string, name: :string, accepts: :keep, emits: :keep, metadata: :keep)
 
     body = %{
       kind: required(opts, :kind),
@@ -80,36 +75,23 @@ defmodule Ww.CLI do
       metadata: metadata(opts)
     }
 
-    admin = System.get_env("WW_ADMIN_TOKEN") || raise("WW_ADMIN_TOKEN is required")
-
-    request(:post, "/v1/endpoints", body, [{"x-ww-admin-token", admin}], false)
+    Tool.request(:post, "/v1/endpoints", body, [{"x-ww-admin-token", Tool.admin_token!()}])
     |> print()
   end
 
   defp client("canvas", args) do
-    {opts, _, invalid} = OptionParser.parse(args, switches: [title: :string])
-    if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
-    admin = System.get_env("WW_ADMIN_TOKEN") || raise("WW_ADMIN_TOKEN is required")
+    opts = parse!(args, title: :string)
+    canvas = Tool.register(Tool.admin_token!(), canvas_endpoint(opts[:title] || "canvas"))
 
-    %{"endpoint" => endpoint, "token" => token} =
-      request(
-        :post,
-        "/v1/endpoints",
-        canvas_endpoint(opts[:title] || "canvas"),
-        [{"x-ww-admin-token", admin}],
-        false
-      )
-
-    print(%{endpoint: endpoint, token: token, url: canvas_url(endpoint["id"], token)})
+    print(%{
+      endpoint: %{id: canvas.id},
+      token: canvas.token,
+      url: Tool.view_url("/canvas", canvas)
+    })
   end
 
   defp client("publish", args) do
-    {opts, _, invalid} =
-      OptionParser.parse(args,
-        switches: [to: :string, file: :string, title: :string, watch: :boolean]
-      )
-
-    if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
+    opts = parse!(args, to: :string, file: :string, title: :string, watch: :boolean)
     to = required(opts, :to)
     file = required(opts, :file)
 
@@ -135,22 +117,17 @@ defmodule Ww.CLI do
   defp client("log", ["page"]), do: IO.write(Ww.Log.canvas_page())
 
   defp client("log", args) do
-    {opts, _, invalid} = OptionParser.parse(args, switches: [dir: :string, open: :boolean])
-    if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
+    opts = parse!(args, dir: :string, open: :boolean)
     Ww.Log.run(opts[:dir] || Ww.Log.default_dir(), Keyword.get(opts, :open, true))
   end
 
   defp client("fleet", args) do
-    {opts, _, invalid} = OptionParser.parse(args, switches: [interval: :integer, open: :boolean])
-    if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
+    opts = parse!(args, interval: :integer, open: :boolean)
     Ww.Fleet.run((opts[:interval] || 2) * 1000, Keyword.get(opts, :open, true))
   end
 
   defp client("discover", args) do
-    {opts, _, _} =
-      OptionParser.parse(args,
-        switches: [kind: :string, name: :string, accepts: :string, online: :boolean]
-      )
+    opts = parse!(args, kind: :string, name: :string, accepts: :string, online: :boolean)
 
     query = opts |> Enum.reject(&is_nil(elem(&1, 1))) |> URI.encode_query()
     request(:get, "/v1/endpoints" <> query_string(query)) |> print()
@@ -160,7 +137,7 @@ defmodule Ww.CLI do
   defp client("deregister", [id]) do
     case System.get_env("WW_ADMIN_TOKEN") do
       nil -> request(:delete, "/v1/endpoints/#{id}")
-      admin -> request(:delete, "/v1/endpoints/#{id}", nil, [{"x-ww-admin-token", admin}], false)
+      admin -> Tool.request(:delete, "/v1/endpoints/#{id}", nil, [{"x-ww-admin-token", admin}])
     end
     |> print()
   end
@@ -171,12 +148,7 @@ defmodule Ww.CLI do
     do: request(:get, "/v1/endpoints/#{endpoint_id()}/history") |> print()
 
   defp client("send", args) do
-    {opts, _, invalid} =
-      OptionParser.parse(args,
-        switches: [to: :string, type: :string, data: :string, id: :string, reply_to: :string]
-      )
-
-    if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
+    opts = parse!(args, to: :string, type: :string, data: :string, id: :string, reply_to: :string)
 
     payload = Jason.decode!(opts[:data] || "{}")
     if !is_map(payload), do: raise("--data must be a JSON object")
@@ -190,13 +162,13 @@ defmodule Ww.CLI do
   end
 
   defp client("ack", args) do
-    {opts, _, _} = OptionParser.parse(args, switches: [id: :string])
+    opts = parse!(args, id: :string)
     id = required(opts, :id)
     request(:post, "/v1/endpoints/#{endpoint_id()}/ack", %{id: id}) |> print()
   end
 
   defp client("tail", args) do
-    {opts, _, _} = OptionParser.parse(args, switches: [ack: :boolean])
+    opts = parse!(args, ack: :boolean)
     stream_tail(if opts[:ack], do: "?ack=1", else: "") |> stream()
   end
 
@@ -224,26 +196,13 @@ defmodule Ww.CLI do
     }
   end
 
-  # The token rides in the fragment, which browsers never send to the server.
-  def canvas_url(id, token),
-    do: base_url() <> "/canvas#" <> URI.encode_query(%{"endpoint" => id, "token" => token})
+  # CLI commands act as WW_ENDPOINT / WW_TOKEN.
+  defp request(method, path, body \\ nil), do: Tool.request(method, path, body, auth_headers())
 
-  @doc false
-  def request(method, path, body \\ nil, extra_headers \\ [], authenticate \\ true) do
-    headers = if authenticate, do: auth_headers(), else: []
-    headers = http_headers(headers ++ extra_headers)
-    url = String.to_charlist(base_url() <> path)
-
-    request =
-      if body,
-        do: {url, headers, ~c"application/json", Jason.encode!(body)},
-        else: {url, headers}
-
-    case :httpc.request(method, request, [], []) do
-      {:ok, {{_, status, _}, _, response}} when status in 200..299 -> Jason.decode!(response)
-      {:ok, {{_, status, _}, _, response}} -> raise("HTTP #{status}: #{response}")
-      {:error, reason} -> raise("request failed: #{inspect(reason)}")
-    end
+  # Unknown options are an error, for every command.
+  defp parse!(args, switches) do
+    {opts, _rest} = OptionParser.parse!(args, strict: switches)
+    opts
   end
 
   # Content polling, not mtimes: mtimes have one-second resolution and editors save atomically.
@@ -287,7 +246,7 @@ defmodule Ww.CLI do
   end
 
   defp stream_tail(query) do
-    url = base_url() <> "/v1/endpoints/#{endpoint_id()}/tail" <> query
+    url = Tool.base_url() <> "/v1/endpoints/#{endpoint_id()}/tail" <> query
 
     {:ok, ref} =
       :httpc.request(:get, {String.to_charlist(url), http_headers(auth_headers())}, [],
@@ -364,10 +323,6 @@ defmodule Ww.CLI do
   end
 
   defp endpoint_id, do: System.get_env("WW_ENDPOINT") || raise("WW_ENDPOINT is required")
-
-  @doc false
-  def base_url,
-    do: System.get_env("WW_URL", "http://127.0.0.1:7420") |> String.trim_trailing("/")
 
   defp http_headers(headers) do
     Enum.map(headers, fn {key, value} -> {String.to_charlist(key), String.to_charlist(value)} end)

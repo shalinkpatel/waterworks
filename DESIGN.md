@@ -203,6 +203,30 @@ it. Publishers diff against their own last publish; one publisher per canvas
 is the expected case, and a mismatch is the signal to send a full page. The
 router still treats deltas as opaque payloads.
 
+## Tools
+
+A tool (`ww fleet`, `ww log`) is an ordinary client of the daemon built on `Ww.Tool`,
+so new tools follow the same conventions:
+
+- It registers a tool endpoint (`metadata.tool: "<name>"`) and a viewer endpoint for
+  its first-party page at `/<name>#endpoint=…&token=…&<name>=<tool id>`, served by
+  the daemon. The page trusts only messages from that tool id, which it takes from
+  the URL. `ww <name> page` inlines the same page for publishing into a canvas.
+- It follows its own mailbox with an auto-acknowledged tail (which also makes it
+  online) and finds peers by discovery. Its endpoint id changes on every launch,
+  so clients discover it by an accepted type or `metadata.tool`, never by id.
+- Subscribers map endpoint ids to the message type they receive: `<name>.state.v1`,
+  or `canvas.data.v1` for canvases. Anyone may subscribe itself (to watch) or a
+  canvas; a canvas page cannot subscribe itself.
+- Only the user may change things: the tool's own viewer or a subscribed canvas.
+  Canvas pages act with `canvas.action.v1 {action, …}`, unwrapped to
+  `<name>.<action>.v1` for the tool's listed actions.
+- State pushes to a canvas are the state itself; other messages to a canvas (replies,
+  receipts, errors) ride on `canvas.data.v1 {reply: {type, payload, reply_to}}`.
+- Requests are `<name>.<verb>.v1` and are answered with `reply_to` set; bad requests
+  get `core.error.v1 {error}`. Existing reply names are kept as they are.
+- `core.shutdown.v1` asks an endpoint to stop; each endpoint decides what that means.
+
 ## Evolution
 
 Message types carry independent versions. Envelope changes require a new envelope

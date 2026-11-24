@@ -1,9 +1,9 @@
-const baseUrl = (process.env.WW_URL || "http://127.0.0.1:7420").replace(/\/$/, "");
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 
-const acceptedTypes = ["canvas.comment.v1", "core.error.v1", "log.changes_requested.v1"];
+const baseUrl = (process.env.WW_URL || "http://127.0.0.1:7420").replace(/\/$/, "");
+// What a canvas accepts; keep in sync with canvas_endpoint/1 in lib/ww/cli.ex.
 const canvasTypes = [
   "canvas.render.v1", "canvas.delta.v1", "canvas.patch.v1", "canvas.data.v1", "canvas.reply.v1",
   "canvas.clear.v1",
@@ -29,6 +29,18 @@ function lineDelta(oldHtml, newHtml) {
     { keep: end },
   ].filter((op) => (op.insert ? op.insert.length : op.keep ?? op.drop) > 0);
 }
+// Every type a session accepts (its registration's `accepts`). `immediate` types prompt the
+// model now; the rest wait in the inbox for ww_inbox unless sent with payload.delivery
+// "immediate" (as the fleet's agent.prompt.v1 is). `hint` is shown with the message.
+const types = {
+  "canvas.comment.v1": { immediate: true },
+  "core.error.v1": { immediate: true },
+  "log.changes_requested.v1": { immediate: true },
+  "agent.prompt.v1": {},
+  "log.approved.v1": {},
+  "log.rejected.v1": {},
+  "core.shutdown.v1": {}, // handled by the adapter itself
+};
 const hints = {
   "log.changes_requested.v1":
     "The user reviewed a log entry you submitted and asked for changes. payload.note is the user's feedback and payload.entry the entry id. Make the requested changes with ww_log action=revise and entry=payload.entry (only the fields that change). If the work itself needs redoing first, do that, then revise.",
@@ -146,7 +158,7 @@ export default function waterworks(pi) {
       return;
     }
 
-    if (!acceptedTypes.includes(message.type) && message.payload?.delivery !== "immediate") {
+    if (!types[message.type]?.immediate && message.payload?.delivery !== "immediate") {
       inbox.set(message.id, message);
       showStatus();
       return;
@@ -217,7 +229,7 @@ export default function waterworks(pi) {
             {
               kind: "agent",
               name: endpointName(pi.getSessionName()),
-              accepts: [...acceptedTypes, "core.shutdown.v1", "log.approved.v1", "log.rejected.v1"],
+              accepts: Object.keys(types),
               emits: ["core.error.v1", ...canvasTypes],
               metadata: { harness: "pi", cwd: ctx.cwd, pid: String(process.pid) },
             },

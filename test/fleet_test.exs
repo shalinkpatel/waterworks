@@ -23,139 +23,98 @@ defmodule WwFleetTest do
   end
 
   @endpoints [
-    %{"id" => "ep_agent", "accepts" => [], "online" => true},
-    %{"id" => "ep_canvas", "accepts" => ["canvas.data.v1"], "online" => true},
-    %{"id" => "ep_view", "accepts" => ["fleet.state.v1"], "online" => true},
-    %{"id" => "ep_dead", "accepts" => [], "online" => false},
-    %{"id" => "ep_fleet", "accepts" => [], "online" => true}
+    %{"id" => "ep_agent", "kind" => "agent", "accepts" => [], "online" => true},
+    %{"id" => "ep_agent_off", "kind" => "agent", "accepts" => [], "online" => false},
+    %{"id" => "ep_canvas", "kind" => "tool", "accepts" => ["canvas.data.v1"], "online" => true},
+    %{"id" => "ep_view", "kind" => "tool", "accepts" => ["fleet.state.v1"], "online" => true},
+    %{"id" => "ep_dead", "kind" => "tool", "accepts" => [], "online" => false},
+    %{"id" => "ep_fleet", "kind" => "tool", "accepts" => [], "online" => true}
   ]
 
-  defp command(type, from, payload, subscribers \\ %{}),
-    do:
-      Fleet.command(
-        %{"type" => type, "from" => from, "payload" => payload},
-        subscribers,
-        @endpoints,
-        "ep_fleet"
-      )
+  # The user is the fleet's own view (ep_view) or a subscribed canvas (ep_canvas). ep_agent has
+  # subscribed itself to watch, which does not make it the user.
+  @ctx %{
+    endpoints: @endpoints,
+    id: "ep_fleet",
+    viewer: "ep_view",
+    headers: [],
+    subscribers: %{
+      "ep_view" => "fleet.state.v1",
+      "ep_canvas" => "canvas.data.v1",
+      "ep_agent" => "fleet.state.v1"
+    }
+  }
 
-  test "subscribe: canvases get canvas.data.v1, a sender can subscribe itself, nothing else" do
-    assert command("fleet.subscribe.v1", "ep_agent", %{"to" => "ep_canvas"}) ==
-             {:subscribe, "ep_canvas", "canvas.data.v1"}
+  defp command(type, from, payload),
+    do: Fleet.command(%{"type" => type, "from" => from, "payload" => payload}, @ctx)
 
-    assert command("fleet.subscribe.v1", "ep_view", %{}) ==
-             {:subscribe, "ep_view", "fleet.state.v1"}
+  defp canvas(action, payload),
+    do: command("canvas.action.v1", "ep_canvas", Map.put(payload, "action", action))
 
-    assert command("fleet.subscribe.v1", "ep_agent", %{"to" => "ep_view"}) == :ignore
-    assert command("fleet.subscribe.v1", "ep_agent", %{"to" => "ep_missing"}) == :ignore
-  end
+  test "remove (offline), disconnect and shutdown (online), from the view or a subscribed canvas" do
+    assert command("fleet.remove.v1", "ep_view", %{"id" => "ep_dead"}) == {:remove, "ep_dead"}
+    assert canvas("remove", %{"id" => "ep_dead"}) == {:remove, "ep_dead"}
 
-  test "remove (offline), disconnect and shutdown (online): subscribers only, never the fleet" do
-    subs = %{"ep_view" => "fleet.state.v1", "ep_canvas" => "canvas.data.v1"}
-
-    canvas = fn action, id ->
-      command("canvas.action.v1", "ep_canvas", %{"action" => action, "id" => id}, subs)
-    end
-
-    assert command("fleet.remove.v1", "ep_view", %{"id" => "ep_dead"}, subs) ==
-             {:remove, "ep_dead"}
-
-    assert canvas.("remove", "ep_dead") == {:remove, "ep_dead"}
-
-    assert command("fleet.disconnect.v1", "ep_view", %{"id" => "ep_agent"}, subs) ==
+    assert command("fleet.disconnect.v1", "ep_view", %{"id" => "ep_agent"}) ==
              {:remove, "ep_agent"}
 
-    assert canvas.("disconnect", "ep_agent") == {:remove, "ep_agent"}
+    assert canvas("disconnect", %{"id" => "ep_agent"}) == {:remove, "ep_agent"}
 
-    assert command("fleet.shutdown.v1", "ep_view", %{"id" => "ep_agent"}, subs) ==
+    assert command("fleet.shutdown.v1", "ep_view", %{"id" => "ep_agent"}) ==
              {:shutdown, "ep_agent"}
 
-    assert canvas.("shutdown", "ep_agent") == {:shutdown, "ep_agent"}
+    assert canvas("shutdown", %{"id" => "ep_agent"}) == {:shutdown, "ep_agent"}
 
-    # Wrong state for the action, not a subscriber, unknown target, or unknown action.
-    assert command("fleet.remove.v1", "ep_view", %{"id" => "ep_agent"}, subs) == :ignore
-    assert command("fleet.disconnect.v1", "ep_view", %{"id" => "ep_dead"}, subs) == :ignore
-    assert command("fleet.shutdown.v1", "ep_view", %{"id" => "ep_dead"}, subs) == :ignore
-    assert command("fleet.disconnect.v1", "ep_agent", %{"id" => "ep_canvas"}, subs) == :ignore
-    assert command("fleet.remove.v1", "ep_view", %{"id" => "ep_missing"}, subs) == :ignore
-    assert canvas.("nuke", "ep_dead") == :ignore
+    assert command("fleet.remove_offline.v1", "ep_view", %{}) ==
+             {:remove_all, ["ep_agent_off", "ep_dead"]}
 
-    # The fleet exits on a shutdown (its own, or core.shutdown.v1), but is never removed.
-    assert command("fleet.shutdown.v1", "ep_view", %{"id" => "ep_fleet"}, subs) == :exit
-    assert command("fleet.disconnect.v1", "ep_view", %{"id" => "ep_fleet"}, subs) == :ignore
-    assert command("core.shutdown.v1", "ep_anyone", %{}, subs) == :exit
+    # Wrong state for the action, unknown target, or unknown action: an error to answer.
+    assert {:error, "cannot remove an endpoint that is online"} =
+             command("fleet.remove.v1", "ep_view", %{"id" => "ep_agent"})
+
+    assert {:error, _} = command("fleet.disconnect.v1", "ep_view", %{"id" => "ep_dead"})
+
+    assert {:error, "no endpoint \"ep_missing\""} =
+             command("fleet.remove.v1", "ep_view", %{"id" => "ep_missing"})
+
+    assert {:error, "unsupported: canvas.action.v1"} = canvas("nuke", %{"id" => "ep_dead"})
+
+    # The fleet exits on a shutdown (its own, or core.shutdown.v1 from anyone), never removed.
+    assert command("fleet.shutdown.v1", "ep_view", %{"id" => "ep_fleet"}) == :exit
+    assert {:error, _} = command("fleet.disconnect.v1", "ep_view", %{"id" => "ep_fleet"})
+    assert command("core.shutdown.v1", "ep_anyone", %{}) == :exit
   end
 
-  test "remove_offline: every offline endpoint except current subscribers, subscribers only" do
-    endpoints = @endpoints ++ [%{"id" => "ep_old_view", "accepts" => [], "online" => false}]
-
-    subs = %{
-      "ep_view" => "fleet.state.v1",
-      "ep_old_view" => "fleet.state.v1",
-      "ep_canvas" => "canvas.data.v1"
-    }
-
-    run = fn type, from, payload ->
-      Fleet.command(
-        %{"type" => type, "from" => from, "payload" => payload},
-        subs,
-        endpoints,
-        "ep_fleet"
-      )
+  test "watching is not acting: subscribed agents and strangers cannot change anything" do
+    for from <- ["ep_agent", "ep_stranger"],
+        {type, payload} <- [
+          {"fleet.remove.v1", %{"id" => "ep_dead"}},
+          {"fleet.disconnect.v1", %{"id" => "ep_agent"}},
+          {"fleet.shutdown.v1", %{"id" => "ep_agent"}},
+          {"fleet.remove_offline.v1", %{}},
+          {"fleet.broadcast.v1", %{"ids" => ["ep_agent"], "text" => "hi"}}
+        ] do
+      assert {:error, "only the fleet view" <> _} = command(type, from, payload)
     end
 
-    assert run.("fleet.remove_offline.v1", "ep_view", %{}) == {:remove_all, ["ep_dead"]}
-
-    assert run.("canvas.action.v1", "ep_canvas", %{"action" => "remove_offline"}) ==
-             {:remove_all, ["ep_dead"]}
-
-    assert run.("fleet.remove_offline.v1", "ep_agent", %{}) == :ignore
+    # Anyone may unsubscribe itself; only the user may unsubscribe others.
+    assert command("fleet.unsubscribe.v1", "ep_agent", %{}) == {:unsubscribe, "ep_agent"}
+    assert {:error, _} = command("fleet.unsubscribe.v1", "ep_agent", %{"to" => "ep_view"})
   end
 
-  test "broadcast: from its own view or a subscribed canvas, only to online agents, non-empty text" do
-    endpoints = [
-      %{"id" => "ep_pi", "kind" => "agent", "online" => true},
-      %{"id" => "ep_pi_off", "kind" => "agent", "online" => false},
-      %{"id" => "ep_tool", "kind" => "tool", "online" => true}
-    ]
+  test "broadcast goes only to online agents and needs text" do
+    ids = ["ep_agent", "ep_agent_off", "ep_canvas", "ep_missing", "ep_agent"]
 
-    subs = %{"ep_view" => "fleet.state.v1", "ep_canvas" => "canvas.data.v1"}
+    assert command("fleet.broadcast.v1", "ep_view", %{"ids" => ids, "text" => "hi"}) ==
+             {:broadcast, ["ep_agent"], "hi"}
 
-    run = fn type, from, payload ->
-      Fleet.command(
-        %{"type" => type, "from" => from, "payload" => payload},
-        subs,
-        endpoints,
-        "ep_fleet",
-        "ep_view"
-      )
-    end
+    assert canvas("broadcast", %{"ids" => ids, "text" => "hi"}) ==
+             {:broadcast, ["ep_agent"], "hi"}
 
-    ids = ["ep_pi", "ep_pi_off", "ep_tool", "ep_missing", "ep_pi"]
+    assert {:error, _} = command("fleet.broadcast.v1", "ep_view", %{"ids" => ids, "text" => "  "})
 
-    assert run.("fleet.broadcast.v1", "ep_view", %{"ids" => ids, "text" => "hi"}) ==
-             {:broadcast, ["ep_pi"], "hi"}
-
-    assert run.("fleet.broadcast.v1", "ep_canvas", %{"ids" => ids, "text" => "hi"}) == :ignore
-
-    assert run.("canvas.action.v1", "ep_canvas", %{
-             "action" => "broadcast",
-             "ids" => ids,
-             "text" => "hi"
-           }) == {:broadcast, ["ep_pi"], "hi"}
-
-    # A canvas that is not subscribed cannot.
-    assert run.("canvas.action.v1", "ep_other", %{
-             "action" => "broadcast",
-             "ids" => ids,
-             "text" => "hi"
-           }) ==
-             :ignore
-
-    assert run.("fleet.broadcast.v1", "ep_view", %{"ids" => ids, "text" => "  "}) == :ignore
-
-    assert run.("fleet.broadcast.v1", "ep_view", %{"ids" => ["ep_tool"], "text" => "hi"}) ==
-             :ignore
+    assert {:error, "none of those agents is online"} =
+             command("fleet.broadcast.v1", "ep_view", %{"ids" => ["ep_canvas"], "text" => "hi"})
   end
 
   test "rows mark subscribers as kept; history is newest first" do
@@ -188,5 +147,6 @@ defmodule WwFleetTest do
     page = Fleet.canvas_page()
     refute page =~ ~s(src="/fleet/app.js")
     assert page =~ "requestAction"
+    assert page =~ ~s(<script>)
   end
 end

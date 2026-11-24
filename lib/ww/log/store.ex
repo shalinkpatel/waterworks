@@ -9,7 +9,7 @@ defmodule Ww.Log.Store do
 
   defstruct [:dir, :sql, :duck, :duck_db]
 
-  @max_rows 100_000
+  @max_rows Ww.Log.Entry.max_rows()
   # Column types returned as-is; anything else (dates, decimals, structs...) is read as text.
   @json_types ~w(BOOLEAN TINYINT SMALLINT INTEGER BIGINT FLOAT REAL DOUBLE VARCHAR)
 
@@ -151,8 +151,9 @@ defmodule Ww.Log.Store do
   """
   def table_rows(store, id, name, opts) do
     with {:ok, duck_table, columns, total} <- current_table(store, id, name) do
-      limit = Keyword.get(opts, :limit, 100)
-      offset = Keyword.get(opts, :offset, 0)
+      # Interpolated below, so integers only.
+      limit = non_negative(Keyword.get(opts, :limit), 100)
+      offset = non_negative(Keyword.get(opts, :offset), 0)
 
       sql =
         "SELECT #{select_list(columns)} FROM #{ident(duck_table)}#{order(columns, opts)} LIMIT #{limit} OFFSET #{offset}"
@@ -179,6 +180,9 @@ defmodule Ww.Log.Store do
     do: if(v =~ ~r/[",\r\n]/, do: ~s("#{String.replace(v, ~s("), ~s(""))}"), else: v)
 
   defp csv_field(v), do: to_string(v)
+
+  defp non_negative(n, _default) when is_integer(n) and n >= 0, do: n
+  defp non_negative(_n, default), do: default
 
   defp current_table(store, id, name) do
     case query(
@@ -223,12 +227,7 @@ defmodule Ww.Log.Store do
   # to the sender rather than a rolled-back write. A later SQLite failure leaves an orphaned
   # (unreferenced) DuckDB table, never a half-referenced one.
   defp load_tables(store, id, revision, specs, previous) do
-    Enum.reduce_while(specs, {:ok, []}, fn spec, {:ok, acc} ->
-      case load_table(store, id, revision, spec, previous) do
-        {:ok, table} -> {:cont, {:ok, acc ++ [table]}}
-        error -> {:halt, error}
-      end
-    end)
+    Ww.Log.Entry.collect(specs, &load_table(store, id, revision, &1, previous))
   end
 
   defp load_table(store, id, _revision, %{kind: :keep, name: name}, previous) do
@@ -374,13 +373,13 @@ defmodule Ww.Log.Store do
   end
 
   defp load(store, id) do
-    where = if id, do: " WHERE entry_id = ?1", else: ""
-    args = if id, do: [id], else: []
+    # ?1 is the entry id, or NULL for every entry.
+    args = [id]
 
     revisions =
       query(
         store,
-        "SELECT entry_id, revision, title, body, tags, links, by, at FROM revisions#{where} ORDER BY revision",
+        "SELECT entry_id, revision, title, body, tags, links, by, at FROM revisions WHERE ?1 IS NULL OR entry_id = ?1 ORDER BY revision",
         args
       )
       |> Enum.group_by(&hd/1, fn [_, rev, title, body, tags, links, by, at] ->
@@ -398,7 +397,7 @@ defmodule Ww.Log.Store do
     reviews =
       query(
         store,
-        "SELECT entry_id, revision, action, note, at FROM reviews#{where} ORDER BY rowid",
+        "SELECT entry_id, revision, action, note, at FROM reviews WHERE ?1 IS NULL OR entry_id = ?1 ORDER BY rowid",
         args
       )
       |> Enum.group_by(&hd/1, fn [_, rev, action, note, at] ->
@@ -409,7 +408,7 @@ defmodule Ww.Log.Store do
       query(
         store,
         # Only the current revision's tables are shown; older ones stay in the store.
-        "SELECT t.entry_id, t.revision, t.name, t.description, t.columns, t.row_count FROM data_tables t JOIN entries e ON e.id = t.entry_id AND e.revision = t.revision#{String.replace(where, "entry_id", "t.entry_id")}",
+        "SELECT t.entry_id, t.revision, t.name, t.description, t.columns, t.row_count FROM data_tables t JOIN entries e ON e.id = t.entry_id AND e.revision = t.revision WHERE ?1 IS NULL OR t.entry_id = ?1",
         args
       )
       |> Enum.group_by(&{Enum.at(&1, 0), Enum.at(&1, 1)}, fn [
@@ -423,12 +422,10 @@ defmodule Ww.Log.Store do
         %{name: name, description: description, columns: Jason.decode!(columns), row_count: rows}
       end)
 
-    entry_where = if id, do: " WHERE id = ?1", else: ""
-
     for [eid, status, rev, author, created, updated] <-
           query(
             store,
-            "SELECT id, status, revision, author, created_at, updated_at FROM entries#{entry_where} ORDER BY created_at, rowid",
+            "SELECT id, status, revision, author, created_at, updated_at FROM entries WHERE ?1 IS NULL OR id = ?1 ORDER BY created_at, rowid",
             args
           ) do
       history = Map.get(revisions, eid, [])
