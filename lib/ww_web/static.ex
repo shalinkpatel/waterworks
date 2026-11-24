@@ -5,15 +5,18 @@ defmodule WwWeb.Static do
   # Agent pages get an opaque origin: they can run scripts and load CDNs but cannot reach the
   # host page, its storage, or the authenticated API.
   @sandbox "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox"
-  # The fleet view is first-party like the canvas host, plus the brand web fonts.
-  @fleet "default-src 'self'; connect-src 'self' ws: wss:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; frame-ancestors 'none'"
+  # Tool views (fleet, log) are first-party like the canvas host, plus the brand web fonts.
+  @tool "default-src 'self'; connect-src 'self' ws: wss:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; frame-ancestors 'none'"
 
   @files %{
     "/demo" => {"demo/index.html", "text/html", @strict},
     "/demo/app.js" => {"demo/app.js", "text/javascript", @strict},
-    "/fleet" => {"fleet/index.html", "text/html", @fleet},
-    "/fleet/app.js" => {"fleet/app.js", "text/javascript", @fleet},
-    "/fleet/icon.svg" => {"fleet/icon.svg", "image/svg+xml", @fleet},
+    "/fleet" => {"fleet/index.html", "text/html", @tool},
+    "/fleet/app.js" => {"fleet/app.js", "text/javascript", @tool},
+    "/fleet/icon.svg" => {"fleet/icon.svg", "image/svg+xml", @tool},
+    "/log" => {"log/index.html", "text/html", @tool},
+    "/log/app.js" => {"log/app.js", "text/javascript", @tool},
+    "/log/icon.svg" => {"log/icon.svg", "image/svg+xml", @tool},
     "/canvas" => {"canvas/index.html", "text/html", @strict},
     "/canvas/app.js" => {"canvas/app.js", "text/javascript", @strict},
     "/canvas/core.js" => {"canvas/core.js", "text/javascript", @strict},

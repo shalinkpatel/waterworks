@@ -157,6 +157,8 @@ defmodule WwWeb.Router do
         conn
         |> put_resp_content_type(type)
         |> put_resp_header("content-security-policy", csp)
+        # Pages change with each release: revalidate instead of running a cached old copy.
+        |> put_resp_header("cache-control", "no-cache")
         |> send_resp(200, body)
 
       _ ->

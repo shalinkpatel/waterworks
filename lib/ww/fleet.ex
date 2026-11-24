@@ -27,7 +27,7 @@ defmodule Ww.Fleet do
   State: `{fleet, endpoints: [{name, kind, type, status, id, cwd}], updated}` (updated: UTC ISO 8601).
   """
 
-  alias Ww.CLI
+  alias Ww.{CLI, Tool}
 
   @external_resource Path.expand("../../priv/fleet/index.html", __DIR__)
   @external_resource Path.expand("../../priv/fleet/app.js", __DIR__)
@@ -45,15 +45,13 @@ defmodule Ww.Fleet do
 
   def run(interval_ms, open?) do
     admin = System.get_env("WW_ADMIN_TOKEN") || raise("WW_ADMIN_TOKEN is required")
-    {id, token} = register(admin, fleet_endpoint())
-    auth = [{"x-ww-endpoint", id}, {"authorization", "Bearer #{token}"}]
+    {id, auth} = Tool.register(admin, fleet_endpoint())
     IO.puts(:stderr, "fleet endpoint: #{id}")
 
     # The standalone view is its own endpoint, so the browser and this process never share a
     # mailbox. It is subscribed up front; the page re-subscribes on every (re)connect.
-    {viewer, viewer_token} = register(admin, viewer_endpoint())
-    query = URI.encode_query(%{"endpoint" => viewer, "token" => viewer_token, "fleet" => id})
-    url = CLI.base_url() <> "/fleet#" <> query
+    {viewer, viewer_auth} = Tool.register(admin, viewer_endpoint())
+    url = Tool.view_url("/fleet", viewer, viewer_auth, %{"fleet" => id})
     IO.puts(:stderr, "fleet view: #{url}")
     if open? and match?({:unix, :darwin}, :os.type()), do: System.cmd("open", [url])
 
@@ -69,16 +67,8 @@ defmodule Ww.Fleet do
       subscribers: %{viewer => "fleet.state.v1"}
     }
 
-    parent = self()
-    spawn_link(fn -> tail(parent, %{id: id, headers: auth}) end)
+    Tool.follow(id, auth)
     loop(state)
-  end
-
-  defp register(admin, body) do
-    %{"endpoint" => %{"id" => id}, "token" => token} =
-      CLI.request(:post, "/v1/endpoints", body, [{"x-ww-admin-token", admin}], false)
-
-    {id, token}
   end
 
   defp fleet_endpoint do
@@ -133,8 +123,8 @@ defmodule Ww.Fleet do
 
   defp wait(state, deadline) do
     receive do
-      {:fleet_message, message} -> state |> handle_message(message) |> wait(deadline)
-      :fleet_deregistered -> exit_deregistered()
+      {:tool_message, message} -> state |> handle_message(message) |> wait(deadline)
+      :tool_deregistered -> exit_deregistered()
     after
       max(deadline - System.monotonic_time(:millisecond), 0) -> loop(state)
     end
@@ -225,57 +215,6 @@ defmodule Ww.Fleet do
       :ignore ->
         state
     end
-  end
-
-  # Streams this endpoint's mailbox (auto-acknowledged) to the fleet process, reconnecting if
-  # the daemon restarts. A deregistered endpoint gets a final "deregistered" line or a 401.
-  defp tail(parent, auth) do
-    url = String.to_charlist(CLI.base_url() <> "/v1/endpoints/#{auth.id}/tail?ack=1")
-
-    headers =
-      Enum.map(auth.headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
-
-    # Its own httpc profile, so the endless stream never blocks the main loop's requests.
-    case :inets.start(:httpc, profile: :ww_fleet_tail) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
-
-    case :httpc.request(:get, {url, headers}, [], [sync: false, stream: :self], :ww_fleet_tail) do
-      {:ok, ref} -> tail_stream(parent, auth, ref, "")
-      {:error, _} -> tail_retry(parent, auth)
-    end
-  end
-
-  defp tail_stream(parent, auth, ref, buffer) do
-    receive do
-      {:http, {^ref, :stream_start, _headers}} ->
-        tail_stream(parent, auth, ref, buffer)
-
-      {:http, {^ref, :stream, chunk}} ->
-        [rest | lines] = String.split(buffer <> chunk, "\n") |> Enum.reverse()
-
-        for line <- Enum.reverse(lines), line != "" do
-          case Jason.decode!(line) do
-            %{"op" => "message", "message" => message} -> send(parent, {:fleet_message, message})
-            %{"op" => "deregistered"} -> send(parent, :fleet_deregistered)
-            _ -> :ok
-          end
-        end
-
-        tail_stream(parent, auth, ref, rest)
-
-      {:http, {^ref, {{_, 401, _}, _, _}}} ->
-        send(parent, :fleet_deregistered)
-
-      {:http, {^ref, _end_or_error}} ->
-        tail_retry(parent, auth)
-    end
-  end
-
-  defp tail_retry(parent, auth) do
-    Process.sleep(1_000)
-    tail(parent, auth)
   end
 
   # delivery: "immediate" makes a Pi session take it as a prompt now (queued types wait).
