@@ -24,7 +24,7 @@ defmodule Ww.Fleet do
       "shutdown", id}`.
     * `core.shutdown.v1`: the fleet deregisters itself and its viewer and exits.
 
-  State: `{fleet, endpoints: [{name, kind, type, status, id, cwd}], updated}`.
+  State: `{fleet, endpoints: [{name, kind, type, status, id, cwd}], updated}` (updated: UTC ISO 8601).
   """
 
   alias Ww.CLI
@@ -150,8 +150,8 @@ defmodule Ww.Fleet do
     payload = %{
       fleet: state.id,
       endpoints: current,
-      updated:
-        "updated " <> (DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601())
+      # UTC ISO 8601; each view shows it in its own local time zone.
+      updated: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     }
 
     state = Enum.reduce(Enum.uniq(targets), state, &deliver(&2, &1, payload))
