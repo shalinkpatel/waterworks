@@ -5,50 +5,60 @@
 <title>Waterworks fleet</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-  /* Baseten design system tokens (basevibe colors_and_type.css). */
+  /* Baseten design system tokens (basevibe colors_and_type.css), mapped to light and dark themes. */
   :root {
-    --ink: #00120b; --gray-50: #f4f9f3; --gray-100: #dee4de; --gray-500: #869089; --gray-700: #5a675e;
-    --gray-850: #203026; --gray-900: #0c1d13; --green-50: #e5fcef; --green-400: #19e76e; --green-700: #0e863f;
-    --blue-50: #f0f6ff; --blue-600: #1960d3; --pink: #ffa9fd; --cream: #f1f7ef;
+    --bg: #f1f7ef; --surface: #fff; --border: #dee4de; --text: #00120b; --muted: #5a675e; --faint: #869089;
+    --subtle: #f4f9f3; --header: #0c1d13; --accent: #0e863f; --live: #19e76e; --on: #0c1d13; --on-text: #fff;
+    --online-bg: #e5fcef; --online: #0e863f; --agent-bg: #f0f6ff; --agent: #1960d3; --tool-bg: #fff0fe; --tool: #a2329e;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #021309; --surface: #0c1d13; --border: #203026; --text: #f4f9f3; --muted: #9ca59e; --faint: #707c73;
+    --subtle: #102419; --header: #000; --accent: #4cec8e; --on: #19e76e; --on-text: #00120b;
+    --online-bg: #00331e; --online: #4cec8e; --agent-bg: #001d4d; --agent: #74a9ff; --tool-bg: #3a1039; --tool: #ffa9fd;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.45 Inter, system-ui, sans-serif; color: var(--ink); background: var(--cream); }
-  header { background: var(--gray-900); color: #fff; padding: 22px 28px; display: flex; align-items: baseline; gap: 14px; }
+  body { margin: 0; font: 14px/1.45 Inter, system-ui, sans-serif; color: var(--text); background: var(--bg); transition: background .2s, color .2s; }
+  header { background: var(--header); color: #fff; padding: 22px 28px; display: flex; align-items: baseline; gap: 14px; border-bottom: 1px solid var(--border); }
   header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
-  header .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green-400); box-shadow: 0 0 10px var(--green-400); align-self: center; }
-  header .sub { font: 12px "IBM Plex Mono", monospace; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.08em; }
+  header .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--live); box-shadow: 0 0 10px var(--live); align-self: center; }
+  header .sub { font: 12px "IBM Plex Mono", monospace; color: #869089; text-transform: uppercase; letter-spacing: 0.08em; }
+  #theme { margin-left: auto; align-self: center; border: 1px solid #344339; background: transparent; color: #fff; border-radius: 999px;
+           padding: 5px 12px; font: 500 12px Inter, sans-serif; cursor: pointer; }
+  #theme:hover { border-color: var(--live); }
   main { padding: 24px 28px; }
   .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 22px; }
-  .stat { background: #fff; border: 1px solid var(--gray-100); border-radius: 12px; padding: 16px 18px; border-top: 4px solid var(--c); }
-  .stat .label { font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.08em; color: var(--gray-700); }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; border-top: 4px solid var(--c); }
+  .stat .label { font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
   .stat .value { font-size: 34px; font-weight: 700; margin-top: 4px; }
-  .card { background: #fff; border: 1px solid var(--gray-100); border-radius: 12px; overflow: hidden; }
-  .toolbar { display: flex; gap: 18px; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--gray-100); flex-wrap: wrap; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .toolbar { display: flex; gap: 18px; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .toolbar h2 { margin: 0 auto 0 0; font-size: 15px; }
   .group { display: flex; gap: 6px; align-items: center; }
-  .group > span { font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; color: var(--gray-700); margin-right: 2px; }
-  .chip { border: 1px solid var(--gray-100); background: var(--gray-50); border-radius: 999px; padding: 4px 11px; font: 500 12px Inter, sans-serif; cursor: pointer; color: var(--gray-850); }
-  .chip[aria-pressed="true"] { background: var(--gray-900); border-color: var(--gray-900); color: #fff; }
-  .toolbar input { border: 1px solid var(--gray-100); border-radius: 8px; padding: 6px 10px; font: 13px Inter, sans-serif; width: 200px; }
+  .group > span { font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+  .chip { border: 1px solid var(--border); background: var(--subtle); border-radius: 999px; padding: 4px 11px; font: 500 12px Inter, sans-serif; cursor: pointer; color: var(--text); }
+  .chip[aria-pressed="true"] { background: var(--on); border-color: var(--on); color: var(--on-text); }
+  .toolbar input { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 6px 10px; font: 13px Inter, sans-serif; width: 200px; }
   table { width: 100%; border-collapse: collapse; }
-  th { text-align: left; font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gray-700);
-       background: var(--gray-50); padding: 10px 18px; cursor: pointer; user-select: none; white-space: nowrap; }
-  th[aria-sort="ascending"]::after { content: " ▲"; color: var(--green-700); }
-  th[aria-sort="descending"]::after { content: " ▼"; color: var(--green-700); }
-  td { padding: 10px 18px; border-top: 1px solid var(--gray-100); }
-  tr:hover td { background: var(--gray-50); }
-  td.mono { font: 12px "IBM Plex Mono", monospace; color: var(--gray-700); }
+  th { text-align: left; font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+       background: var(--subtle); padding: 10px 18px; cursor: pointer; user-select: none; white-space: nowrap; }
+  th[aria-sort="ascending"]::after { content: " ▲"; color: var(--accent); }
+  th[aria-sort="descending"]::after { content: " ▼"; color: var(--accent); }
+  td { padding: 10px 18px; border-top: 1px solid var(--border); }
+  tr:hover td { background: var(--subtle); }
+  td.mono { font: 12px "IBM Plex Mono", monospace; color: var(--muted); }
   .badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; }
-  .online { background: var(--green-50); color: var(--green-700); }
-  .online::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green-400); }
-  .offline { background: var(--gray-50); color: var(--gray-500); }
-  .agent { background: var(--blue-50); color: var(--blue-600); }
-  .tool { background: #fff0fe; color: #a2329e; }
-  .empty { padding: 24px; text-align: center; color: var(--gray-500); }
+  .online { background: var(--online-bg); color: var(--online); }
+  .online::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--live); }
+  .offline { background: var(--subtle); color: var(--faint); }
+  .agent { background: var(--agent-bg); color: var(--agent); }
+  .tool { background: var(--tool-bg); color: var(--tool); }
+  .empty { padding: 24px; text-align: center; color: var(--faint); }
 </style>
 </head>
 <body>
-<header><span class="dot"></span><h1>Waterworks fleet</h1><span class="sub" id="updated"></span></header>
+<header><span class="dot"></span><h1>Waterworks fleet</h1><span class="sub" id="updated"></span><button id="theme" type="button"></button></header>
 <main>
   <section class="stats" id="stats"></section>
   <section class="card">
@@ -135,6 +145,19 @@
       return tr;
     }) : [Object.assign(el("tr"), { innerHTML: '<td class="empty" colspan="6">No endpoints match</td>' })]));
   }
+
+  // Theme: follows the OS until toggled; storage may be blocked in the sandboxed frame.
+  const stored = (() => { try { return localStorage.getItem("ww-fleet-theme"); } catch { return null; } })();
+  function setTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    $("theme").textContent = theme === "dark" ? "☀ Light mode" : "☾ Dark mode";
+  }
+  setTheme(stored || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+  $("theme").onclick = () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    try { localStorage.setItem("ww-fleet-theme", next); } catch {}
+  };
 
   $("q").oninput = render;
   addEventListener("waterworks", (e) => {
