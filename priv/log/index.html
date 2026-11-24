@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Waterworks log</title>
+<link rel="icon" type="image/svg+xml" href="/log/icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Baseten design system tokens, shared with the fleet view. */
+  :root {
+    --bg: #f1f7ef; --surface: #fff; --border: #dee4de; --text: #00120b; --muted: #5a675e; --faint: #869089;
+    --subtle: #f4f9f3; --header: #0c1d13; --accent: #0e863f; --live: #19e76e; --on: #0c1d13; --on-text: #fff;
+    --ok-bg: #e5fcef; --ok: #0e863f; --wait-bg: #fffaeb; --wait: #9c7400; --ask-bg: #f0f6ff; --ask: #1960d3;
+    --no-bg: #fcefee; --no: #b4332e; --tag-bg: #fff0fe; --tag: #a2329e;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #021309; --surface: #0c1d13; --border: #203026; --text: #f4f9f3; --muted: #9ca59e; --faint: #707c73;
+    --subtle: #102419; --header: #000; --accent: #4cec8e; --on: #19e76e; --on-text: #00120b;
+    --ok-bg: #00331e; --ok: #4cec8e; --wait-bg: #423100; --wait: #f9d25e; --ask-bg: #001d4d; --ask: #74a9ff;
+    --no-bg: #390b0a; --no: #e98682; --tag-bg: #3a1039; --tag: #ffa9fd;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; font: 14px/1.45 Inter, system-ui, sans-serif; color: var(--text); background: var(--bg); }
+  button { font: inherit; }
+  header { background: var(--header); color: #fff; padding: 20px 28px; display: flex; align-items: baseline; gap: 14px; border-bottom: 1px solid var(--border); }
+  header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  header .logo { display: flex; align-self: center; }
+  header .logo svg { border-radius: 8px; box-shadow: 0 0 0 1px #344339, 0 0 14px rgba(25, 231, 110, .25); }
+  header .sub { font: 12px "IBM Plex Mono", monospace; color: #869089; text-transform: uppercase; letter-spacing: 0.08em; }
+  header .spacer { margin-left: auto; }
+  #theme { align-self: center; border: 1px solid #344339; background: transparent; color: #fff; border-radius: 999px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+  main { padding: 22px 28px; display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  .side .card { padding: 14px 16px; margin-bottom: 16px; }
+  .side h2 { margin: 0 0 10px; font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-weight: 600; }
+  .cal-head button { border: 1px solid var(--border); background: transparent; color: var(--text); border-radius: 8px; width: 28px; height: 28px; cursor: pointer; }
+  .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; text-align: center; }
+  .cal .dow { font: 10px "IBM Plex Mono", monospace; color: var(--faint); padding: 2px 0; }
+  .day { position: relative; border: 1px solid transparent; background: transparent; color: var(--text); border-radius: 8px; padding: 6px 0 9px; cursor: pointer; font-size: 12px; }
+  .day:hover { background: var(--subtle); }
+  .day.other { color: var(--faint); }
+  .day.today { border-color: var(--border); font-weight: 700; }
+  .day.selected { background: var(--on); color: var(--on-text); }
+  .day .n { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+  .day.selected .n { background: var(--on-text); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--border); background: var(--subtle); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; color: var(--text); }
+  .chip[aria-pressed="true"] { background: var(--on); border-color: var(--on); color: var(--on-text); }
+  .chip .c { color: var(--faint); margin-left: 3px; }
+  .chip[aria-pressed="true"] .c { color: inherit; opacity: .7; }
+  .toolbar { display: flex; gap: 8px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .tabs { display: flex; gap: 4px; margin-right: auto; flex-wrap: wrap; }
+  .tab { border: 0; background: transparent; color: var(--muted); font-weight: 600; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+  .tab[aria-selected="true"] { color: var(--text); background: var(--subtle); }
+  .tab .c { font: 500 11px "IBM Plex Mono", monospace; color: var(--faint); margin-left: 4px; }
+  input[type=search], input[type=text], textarea { border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 8px; padding: 7px 10px; font: 13px Inter, sans-serif; }
+  .filters { display: flex; gap: 8px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  .item { padding: 14px 16px; border-top: 1px solid var(--border); cursor: pointer; }
+  .item:first-child { border-top: 0; }
+  .item:hover { background: var(--subtle); }
+  .item .top { display: flex; gap: 8px; align-items: center; }
+  .item .title { font-weight: 600; font-size: 15px; }
+  .item .meta { font: 12px "IBM Plex Mono", monospace; color: var(--muted); margin: 4px 0 6px; }
+  .badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 9px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .pending { background: var(--wait-bg); color: var(--wait); }
+  .changes_requested { background: var(--ask-bg); color: var(--ask); }
+  .approved { background: var(--ok-bg); color: var(--ok); }
+  .rejected { background: var(--no-bg); color: var(--no); }
+  .tag { background: var(--tag-bg); color: var(--tag); }
+  .empty { padding: 28px; text-align: center; color: var(--faint); }
+  .primary { border: 0; border-radius: 8px; padding: 8px 14px; background: var(--on); color: var(--on-text); font-weight: 600; cursor: pointer; }
+  header .primary { background: var(--live); color: #00120b; align-self: center; }
+  .ghost { border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; background: transparent; color: var(--text); cursor: pointer; }
+  .danger { border: 1px solid var(--no); color: var(--no); }
+  dialog { border: 1px solid var(--border); border-radius: 14px; padding: 0; width: min(860px, 94vw); background: var(--surface); color: var(--text); box-shadow: 0 24px 60px rgba(0,0,0,.45); }
+  dialog::backdrop { background: rgba(0, 18, 11, .55); }
+  dialog .dh { background: var(--header); color: #fff; padding: 16px 20px; display: flex; gap: 10px; align-items: center; }
+  dialog .dh h3 { margin: 0; font-size: 17px; flex: 1; }
+  dialog .db { padding: 16px 20px; max-height: 68vh; overflow: auto; }
+  dialog .df { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 20px 16px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+  dialog .df .left { margin-right: auto; }
+  .section { margin-top: 18px; }
+  .section h4 { margin: 0 0 8px; font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .bodytext { white-space: pre-wrap; line-height: 1.55; background: var(--subtle); border-radius: 10px; padding: 12px 14px; }
+  .links a { color: var(--accent); }
+  .links li, .timeline li { margin-bottom: 4px; }
+  .timeline { font-size: 13px; padding-left: 18px; }
+  .timeline .when { font: 12px "IBM Plex Mono", monospace; color: var(--faint); }
+  table.data { border-collapse: collapse; font: 12px "IBM Plex Mono", monospace; margin-top: 8px; display: block; overflow: auto; max-height: 280px; }
+  table.data th, table.data td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; white-space: nowrap; }
+  table.data th { background: var(--subtle); }
+  .form label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  .form input, .form textarea { width: 100%; }
+  .form textarea { min-height: 140px; resize: vertical; font-family: "IBM Plex Mono", monospace; }
+  .hint { font-size: 12px; color: var(--faint); }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--no-bg); color: var(--no); border: 1px solid var(--no); border-radius: 10px; padding: 8px 14px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="logo" aria-hidden="true"><svg width="30" height="30" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0c1d13"/><rect x="16" y="11" width="32" height="42" rx="5" fill="#19e76e"/><g stroke="#0c1d13" stroke-width="3" stroke-linecap="round"><path d="M23 22h18M23 30h18M23 38h9"/></g><circle cx="44" cy="44" r="9" fill="#0c1d13"/><path d="M39.5 44.2l3 3 6-6.4" fill="none" stroke="#19e76e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+  <h1>Waterworks log</h1><span class="sub" id="updated"></span>
+  <span class="spacer"></span>
+  <button id="new" class="primary" type="button">New entry</button>
+  <button id="theme" type="button"></button>
+</header>
+<main>
+  <aside class="side">
+    <section class="card" aria-label="Calendar">
+      <div class="cal-head"><button id="prev" type="button" aria-label="Previous month">‹</button><span id="month"></span><button id="next" type="button" aria-label="Next month">›</button></div>
+      <div class="cal" id="cal"></div>
+    </section>
+    <section class="card" aria-label="Tags"><h2>Tags</h2><div class="chips" id="tags"></div></section>
+  </aside>
+  <section class="card">
+    <div class="toolbar">
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <input id="q" type="search" placeholder="Search title, body, author" aria-label="Search entries">
+    </div>
+    <div class="filters" id="filters" hidden></div>
+    <div id="list"></div>
+  </section>
+</main>
+<dialog id="entry" aria-labelledby="entry-title">
+  <div class="dh"><h3 id="entry-title"></h3><span id="entry-status"></span></div>
+  <div class="db" id="entry-body"></div>
+  <div class="df" id="entry-actions"></div>
+</dialog>
+<dialog id="form" aria-labelledby="form-title">
+  <div class="dh"><h3 id="form-title"></h3></div>
+  <div class="db form">
+    <label for="f-title">Title</label><input id="f-title" type="text" maxlength="200">
+    <label for="f-body">Body (markdown)</label><textarea id="f-body"></textarea>
+    <label for="f-tags">Tags (comma separated)</label><input id="f-tags" type="text" placeholder="kv-cache, bench">
+    <label for="f-links">Links (one per line: url, or label | url)</label><textarea id="f-links" style="min-height:70px"></textarea>
+    <p class="hint" id="f-hint"></p>
+  </div>
+  <div class="df"><button class="ghost" type="button" id="f-cancel">Cancel</button><button class="primary" type="button" id="f-save">Save</button></div>
+</dialog>
+<div id="toast" role="status" hidden></div>
+<script src="/log/app.js"></script>
+</body>
+</html>

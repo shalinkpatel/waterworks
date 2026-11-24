@@ -132,6 +132,14 @@ defmodule Ww.CLI do
 
   defp client("fleet", ["page"]), do: IO.write(Ww.Fleet.canvas_page())
 
+  defp client("log", ["page"]), do: IO.write(Ww.Log.canvas_page())
+
+  defp client("log", args) do
+    {opts, _, invalid} = OptionParser.parse(args, switches: [dir: :string, open: :boolean])
+    if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
+    Ww.Log.run(opts[:dir] || Ww.Log.default_dir(), Keyword.get(opts, :open, true))
+  end
+
   defp client("fleet", args) do
     {opts, _, invalid} = OptionParser.parse(args, switches: [interval: :integer, open: :boolean])
     if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
@@ -383,8 +391,11 @@ defmodule Ww.CLI do
 
           nil ->
             case File.read(cookie_file) do
-              {:ok, contents} -> String.trim(contents)
-              _ -> raise("a distributed node needs a cookie: put it in ~/.erlang.cookie (mode 0400)")
+              {:ok, contents} ->
+                String.trim(contents)
+
+              _ ->
+                raise("a distributed node needs a cookie: put it in ~/.erlang.cookie (mode 0400)")
             end
         end
 
@@ -396,7 +407,9 @@ defmodule Ww.CLI do
 
   # The release bundles ERTS, epmd included; fall back to PATH when run from mix.
   defp epmd do
-    bundled = Path.join([:code.root_dir(), "erts-#{:erlang.system_info(:version)}", "bin", "epmd"])
+    bundled =
+      Path.join([:code.root_dir(), "erts-#{:erlang.system_info(:version)}", "bin", "epmd"])
+
     if File.exists?(bundled), do: bundled, else: "epmd"
   end
 
@@ -450,6 +463,8 @@ defmodule Ww.CLI do
     ww publish --to CANVAS_ID --file PAGE.html [--title TITLE] [--watch]  (--watch sends deltas)
     ww fleet [--interval SECONDS] [--no-open]  (fleet tool + standalone view at /fleet)
     ww fleet page  (prints the fleet view as one page, to publish into a canvas)
+    ww log [--dir DIR] [--no-open]  (work log with review queue + view at /log; persists in DIR)
+    ww log page  (prints the log view as one page, to publish into a canvas)
     ww discover [--kind KIND] [--name NAME] [--accepts TYPE] [--online]
     ww inspect ENDPOINT_ID
     ww deregister ENDPOINT_ID  (deletes it and its messages; admin token, or self)

@@ -35,6 +35,8 @@ defmodule Ww.MixProject do
     [
       {:bandit, "~> 1.15"},
       {:jason, "~> 1.4"},
+      {:exqlite, "~> 0.43.0"},
+      {:duckdbex, "~> 0.7.1"},
       {:websock, "~> 0.5"},
       {:websock_adapter, "~> 0.7"},
       {:mint_web_socket, "~> 1.0", only: :test}

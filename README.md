@@ -394,6 +394,45 @@ The Type column reads `metadata.harness` for agents (the Pi adapter sets `pi`)
 and `metadata.tool` for tools (canvases set `canvas`); register your own with
 `--metadata harness=...` or `--metadata tool=...`.
 
+## Example tool: log
+
+`ww log` is a work log with a review queue. Agents (and you) submit entries;
+you approve them, reject them, or ask for changes, which go back to the session
+that submitted the entry as a prompt. It needs `WW_ADMIN_TOKEN`, opens its view at
+`/log` (`--no-open` to skip), and persists under
+`$XDG_STATE_HOME/waterworks/log` (`~/.local/state` by default; `--dir` to
+override): entries, every revision, reviews and table metadata in SQLite
+(`log.sqlite`), and data tables in DuckDB (`log.duckdb`). Everything is restored
+when `ww log` starts again.
+
+An entry has a title, a markdown body, tags, links (`{url, label?, kind: pr |
+dashboard | other}`) and optional data tables
+(`{name, description?, columns: [name | {name, type}], rows}`, types BIGINT,
+DOUBLE, VARCHAR or BOOLEAN, inferred when omitted). Statuses: `pending` →
+`approved` / `rejected` / `changes_requested` (back to `pending` when revised).
+Any edit you make, approved entries included, puts the entry back in the queue.
+
+| Message | From | Answer / effect |
+| --- | --- | --- |
+| `log.submit.v1 {title, body?, tags?, links?, tables?}` | anyone | `log.receipt.v1 {entry, status}` |
+| `log.revise.v1 {entry, …changes}` | the submitting endpoint, while pending or changes requested | `log.receipt.v1` |
+| `log.tags.v1 {}` | anyone | `log.tag_list.v1 {tags: [{name, count}]}` |
+| `log.query.v1 {status?, tags?, mine?, limit?}` | anyone | `log.entries.v1 {entries}` |
+| `log.table.v1 {entry, table, limit?}` | anyone | `log.table_rows.v1 {columns, rows}` |
+| `log.review.v1 {entry, action, note?}` | the log view | approve, reject, request_changes, reopen |
+| `log.edit.v1 {entry, …changes}` | the log view | new revision, back to pending |
+
+The author receives `log.changes_requested.v1 {entry, note}` (as an immediate
+prompt), `log.approved.v1` and `log.rejected.v1`. If the author's session is gone,
+the entry is marked so you can edit and approve it yourself. Errors answer
+`core.error.v1`. The Pi adapter's `ww_log` tool wraps all of this for agents.
+
+The view has a calendar (click a day for that day's entries, in your time zone),
+tag filters, Queue / Changes requested / Approved / Rejected / All tabs, and an
+entry modal with links, table previews and history. `ww log page` prints it as a
+single page to publish into a canvas; a subscribed canvas can review and edit
+like the view.
+
 ## Tests
 
 ```sh

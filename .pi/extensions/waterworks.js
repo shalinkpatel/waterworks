@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const acceptedTypes = ["demo.echo.v1", "canvas.comment.v1", "core.error.v1"];
+const acceptedTypes = ["demo.echo.v1", "canvas.comment.v1", "core.error.v1", "log.changes_requested.v1"];
 const canvasTypes = [
   "canvas.render.v1", "canvas.delta.v1", "canvas.patch.v1", "canvas.data.v1", "canvas.reply.v1",
   "canvas.clear.v1",
@@ -30,6 +30,8 @@ function lineDelta(oldHtml, newHtml) {
   ].filter((op) => (op.insert ? op.insert.length : op.keep ?? op.drop) > 0);
 }
 const hints = {
+  "log.changes_requested.v1":
+    "The user reviewed a log entry you submitted and asked for changes. payload.note is the user's feedback and payload.entry the entry id. Make the requested changes with ww_log action=revise and entry=payload.entry (only the fields that change). If the work itself needs redoing first, do that, then revise.",
   "agent.prompt.v1":
     "The user broadcast this to selected agent sessions from the Waterworks fleet view (it is relayed by the fleet endpoint). payload.text is the user's message: handle it as a request from the user. No reply message is needed unless the text asks for one.",
   "core.error.v1":
@@ -109,8 +111,17 @@ export default function waterworks(pi) {
     ui?.notify(`Waterworks: ${reason}; /reload to rejoin`, "warning");
   }
 
+  // ww_log requests wait here for the log's reply (matched by reply_to).
+  const replies = new Map();
+
   async function handleMessage(message) {
     if (!active) return;
+    if (message.reply_to && replies.has(message.reply_to)) {
+      replies.get(message.reply_to)(message);
+      replies.delete(message.reply_to);
+      await acknowledge(message.id);
+      return;
+    }
     // core.shutdown.v1 asks an endpoint to stop. A Pi session never exits for a remote message;
     // it leaves the fleet instead (deregisters itself), and the user keeps working.
     if (message.type === "core.shutdown.v1") {
@@ -206,7 +217,7 @@ export default function waterworks(pi) {
             {
               kind: "agent",
               name: endpointName(pi.getSessionName()),
-              accepts: [...acceptedTypes, "core.shutdown.v1"],
+              accepts: [...acceptedTypes, "core.shutdown.v1", "log.approved.v1", "log.rejected.v1"],
               emits: ["demo.echoed.v1", "core.error.v1", ...canvasTypes],
               metadata: { harness: "pi", cwd: ctx.cwd, pid: String(process.pid) },
             },
@@ -279,6 +290,64 @@ export default function waterworks(pi) {
         content: [{ type: "text", text: JSON.stringify({ status: "accepted", id: response.message.id }) }],
         details: { message: response.message },
       };
+    },
+  });
+
+  // The log endpoint changes id when `ww log` restarts, so it is discovered on every call.
+  async function logRequest(type, payload) {
+    const query = new URLSearchParams({ accepts: "log.submit.v1", online: "true" });
+    const found = (await request("GET", `/v1/endpoints?${query}`, undefined, endpointHeaders(endpoint))).endpoints;
+    const log = found.find((e) => e.metadata?.tool === "log") || found[0];
+    if (!log) throw new Error("no ww log is running (start it with `ww log`)");
+    const id = `msg_${crypto.randomUUID()}`;
+    const reply = new Promise((resolve, reject) => {
+      replies.set(id, resolve);
+      setTimeout(() => replies.delete(id) && reject(new Error("ww log did not answer within 15s")), 15_000);
+    });
+    await send({ id, to: log.id, type, payload, reply_to: null });
+    const message = await reply;
+    if (message.type === "core.error.v1") throw new Error(`ww log: ${message.payload?.error}`);
+    return message.payload;
+  }
+
+  pi.registerTool({
+    name: "ww_log",
+    label: "Waterworks Log",
+    description: [
+      "Log work items and results for the user to review (the Waterworks log).",
+      "action=submit {title, body (markdown), tags, links, tables?} queues an entry; the user approves it, rejects it, or asks for changes (you then get log.changes_requested.v1).",
+      "action=revise {entry, ...fields to change} revises your own entry while pending or changes_requested.",
+      "action=tags lists the tags already in use with counts: prefer them over new ones.",
+      "action=query {status?, tags?, mine?, limit?} lists entries. action=table {entry, table, limit?} reads a data table's rows.",
+      "links: [{url, label?, kind?: pr|dashboard|other}] or plain URLs.",
+      "tables: [{name (snake_case), description?, columns: [name | {name, type: BIGINT|DOUBLE|VARCHAR|BOOLEAN}], rows: [[...]]}], stored in DuckDB (types inferred when omitted).",
+    ].join(" "),
+    promptSnippet: "Log work items/results for the user's review (ww_log)",
+    promptGuidelines: [
+      "When you finish a meaningful piece of work or get a result worth keeping, record it with ww_log action=submit, using existing tags (ww_log action=tags) where they fit.",
+    ],
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["submit", "revise", "tags", "query", "table"] },
+        entry: { type: "string" },
+        title: { type: "string" },
+        body: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+        links: { type: "array", items: {} },
+        tables: { type: "array", items: { type: "object" } },
+        status: { type: "string", enum: ["pending", "changes_requested", "approved", "rejected"] },
+        mine: { type: "boolean" },
+        table: { type: "string" },
+        limit: { type: "number" },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    async execute(_toolCallId, params) {
+      const { action, ...payload } = params;
+      const result = await logRequest(`log.${action}.v1`, payload);
+      return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   });
 

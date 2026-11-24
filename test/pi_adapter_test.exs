@@ -18,7 +18,14 @@ defmodule WwPiAdapterTest do
   test "live Pi session exchanges browser messages and handles reconnect and queues unmarked types" do
     {browser, browser_token} = register_browser()
     pi = start_pi(browser.id)
-    on_exit(fn -> if Port.info(pi), do: Port.close(pi) end)
+    # Closing the port does not stop node (the Pi session keeps its own event loop alive), so
+    # kill it by OS pid; otherwise every run leaks a session process.
+    {:os_pid, os_pid} = Port.info(pi, :os_pid)
+
+    on_exit(fn ->
+      System.cmd("kill", ["-9", Integer.to_string(os_pid)], stderr_to_stdout: true)
+    end)
+
     agent = wait_for_agent(browser, browser_token)
 
     socket = TestWS.connect(browser.id, browser_token)
