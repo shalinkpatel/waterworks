@@ -9,6 +9,7 @@ let socket = null;
 
 function apply(state) {
   if (!Array.isArray(state?.endpoints)) return;
+  pending.delete("remove_offline");
   endpoints = state.endpoints;
   updated = state.updated || "live";
   fleetId = state.fleet || fleetId;
@@ -90,8 +91,30 @@ function actions(e) {
   return cell;
 }
 
+// Toolbar: remove every offline endpoint at once (two clicks, like the row buttons). The fleet
+// keeps its current subscribers, such as this view.
+function removeOfflineButton() {
+  const b = $("remove-offline");
+  const count = endpoints.filter((e) => e.status === "offline").length;
+  b.hidden = count === 0;
+  if (b.classList.contains("armed")) return;
+  b.disabled = pending.has("remove_offline");
+  b.textContent = b.disabled ? "Removing offline…" : `Remove all offline (${count})`;
+  b.onclick = () => {
+    if (!b.classList.contains("armed")) {
+      b.classList.add("armed"); b.textContent = `Confirm: remove ${count} offline`;
+      setTimeout(() => { if (!b.disabled) { b.classList.remove("armed"); removeOfflineButton(); } }, 3000);
+      return;
+    }
+    b.classList.remove("armed");
+    pending.add("remove_offline");
+    requestAction("remove_offline", null);
+    render();
+  };
+}
+
 function render() {
-  stats(); chips();
+  stats(); chips(); removeOfflineButton();
   $("updated").textContent = updated;
   $("head").replaceChildren(...cols.map((c) => {
     const th = el("th", { scope: "col", tabIndex: 0 }, c);

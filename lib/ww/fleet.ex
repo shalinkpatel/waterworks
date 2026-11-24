@@ -13,6 +13,8 @@ defmodule Ww.Fleet do
       ones) from a subscriber: deregisters the endpoint; a connected one is disconnected.
     * `fleet.shutdown.v1 {id}` from a subscriber: sends `core.shutdown.v1` to an online
       endpoint, asking it to stop (each endpoint decides what that means).
+    * `fleet.remove_offline.v1 {}` from a subscriber: removes every offline endpoint except
+      current subscribers.
     * Canvases send the same as `canvas.action.v1 {action: "remove" | "disconnect" |
       "shutdown", id}`.
     * `core.shutdown.v1`: the fleet deregisters itself and its viewer and exits.
@@ -83,6 +85,7 @@ defmodule Ww.Fleet do
         "fleet.remove.v1",
         "fleet.disconnect.v1",
         "fleet.shutdown.v1",
+        "fleet.remove_offline.v1",
         "canvas.action.v1",
         "core.shutdown.v1"
       ],
@@ -96,7 +99,13 @@ defmodule Ww.Fleet do
       kind: "tool",
       name: "fleet view",
       accepts: ["fleet.state.v1", "core.shutdown.v1"],
-      emits: ["fleet.subscribe.v1", "fleet.remove.v1", "fleet.disconnect.v1", "fleet.shutdown.v1"],
+      emits: [
+        "fleet.subscribe.v1",
+        "fleet.remove.v1",
+        "fleet.remove_offline.v1",
+        "fleet.disconnect.v1",
+        "fleet.shutdown.v1"
+      ],
       metadata: %{tool: "fleet-view"}
     }
   end
@@ -177,6 +186,11 @@ defmodule Ww.Fleet do
 
       {:remove, id} ->
         if remove(state, id), do: poll(state), else: state
+
+      {:remove_all, ids} ->
+        removed = Enum.count(ids, &remove(state, &1))
+        IO.puts(:stderr, "removed #{removed} offline endpoint(s)")
+        if removed > 0, do: poll(state), else: state
 
       {:shutdown, id} ->
         request_shutdown(state, id, message["from"])
@@ -271,6 +285,7 @@ defmodule Ww.Fleet do
     "fleet.remove.v1" => "remove",
     "fleet.disconnect.v1" => "disconnect",
     "fleet.shutdown.v1" => "shutdown",
+    "fleet.remove_offline.v1" => "remove_offline",
     "canvas.action.v1" => nil
   }
 
@@ -310,7 +325,11 @@ defmodule Ww.Fleet do
         target = Enum.find(endpoints, &(&1["id"] == id))
 
         cond do
-          not Map.has_key?(subscribers, from) or is_nil(target) -> :ignore
+          not Map.has_key?(subscribers, from) -> :ignore
+          # Every offline endpoint except current subscribers (e.g. the fleet's own viewer,
+          # which stays reopenable after its tab closes).
+          action == "remove_offline" -> {:remove_all, offline_ids(endpoints, subscribers)}
+          is_nil(target) -> :ignore
           # Shutting the fleet down from its own view is allowed; removing it is not.
           action == "shutdown" and id == self_id -> :exit
           id == self_id -> :ignore
@@ -324,6 +343,15 @@ defmodule Ww.Fleet do
         :ignore
     end
   end
+
+  defp offline_ids(endpoints, subscribers),
+    do:
+      for(
+        e <- endpoints,
+        e["online"] == false,
+        not Map.has_key?(subscribers, e["id"]),
+        do: e["id"]
+      )
 
   @doc "Page rows for every endpoint, in a stable order."
   def rows(endpoints) do

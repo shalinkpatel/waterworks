@@ -118,6 +118,32 @@ defmodule WwFleetTest do
     assert command("core.shutdown.v1", "ep_anyone", %{}, subs) == :exit
   end
 
+  test "remove_offline: every offline endpoint except current subscribers, subscribers only" do
+    endpoints = @endpoints ++ [%{"id" => "ep_old_view", "accepts" => [], "online" => false}]
+
+    subs = %{
+      "ep_view" => "fleet.state.v1",
+      "ep_old_view" => "fleet.state.v1",
+      "ep_canvas" => "canvas.data.v1"
+    }
+
+    run = fn type, from, payload ->
+      Fleet.command(
+        %{"type" => type, "from" => from, "payload" => payload},
+        subs,
+        endpoints,
+        "ep_fleet"
+      )
+    end
+
+    assert run.("fleet.remove_offline.v1", "ep_view", %{}) == {:remove_all, ["ep_dead"]}
+
+    assert run.("canvas.action.v1", "ep_canvas", %{"action" => "remove_offline"}) ==
+             {:remove_all, ["ep_dead"]}
+
+    assert run.("fleet.remove_offline.v1", "ep_agent", %{}) == :ignore
+  end
+
   test "the canvas page inlines the view script" do
     page = Fleet.canvas_page()
     refute page =~ ~s(src="/fleet/app.js")
