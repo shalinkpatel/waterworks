@@ -13,6 +13,7 @@ defmodule WwWeb.Static do
     "/demo/app.js" => {"demo/app.js", "text/javascript", @strict},
     "/fleet" => {"fleet/index.html", "text/html", @fleet},
     "/fleet/app.js" => {"fleet/app.js", "text/javascript", @fleet},
+    "/fleet/icon.svg" => {"fleet/icon.svg", "image/svg+xml", @fleet},
     "/canvas" => {"canvas/index.html", "text/html", @strict},
     "/canvas/app.js" => {"canvas/app.js", "text/javascript", @strict},
     "/canvas/core.js" => {"canvas/core.js", "text/javascript", @strict},

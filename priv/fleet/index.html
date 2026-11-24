@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Waterworks fleet</title>
+<link rel="icon" type="image/svg+xml" href="/fleet/icon.svg">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   /* Baseten design system tokens (basevibe colors_and_type.css), mapped to light and dark themes. */
@@ -23,7 +24,8 @@
   body { margin: 0; font: 14px/1.45 Inter, system-ui, sans-serif; color: var(--text); background: var(--bg); transition: background .2s, color .2s; }
   header { background: var(--header); color: #fff; padding: 22px 28px; display: flex; align-items: baseline; gap: 14px; border-bottom: 1px solid var(--border); }
   header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
-  header .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--live); box-shadow: 0 0 10px var(--live); align-self: center; }
+  header .logo { display: flex; align-self: center; }
+  header .logo svg { border-radius: 8px; box-shadow: 0 0 0 1px #344339, 0 0 14px rgba(25, 231, 110, .25); }
   header .sub { font: 12px "IBM Plex Mono", monospace; color: #869089; text-transform: uppercase; letter-spacing: 0.08em; }
   #theme { margin-left: auto; align-self: center; border: 1px solid #344339; background: transparent; color: #fff; border-radius: 999px;
            padding: 5px 12px; font: 500 12px Inter, sans-serif; cursor: pointer; }
@@ -104,7 +106,7 @@
 </style>
 </head>
 <body>
-<header><span class="dot"></span><h1>Waterworks fleet</h1><span class="sub" id="updated"></span><button id="theme" type="button"></button></header>
+<header><span class="logo" aria-hidden="true"><svg width="30" height="30" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0c1d13"/><path d="M32 9C32 9 15 29 15 40a17 17 0 0 0 34 0C49 29 32 9 32 9Z" fill="#19e76e"/><path d="M25 43 32 31 39 43Z" fill="none" stroke="#0c1d13" stroke-width="2.2" stroke-linejoin="round"/><g fill="#0c1d13"><circle cx="32" cy="31" r="3.6"/><circle cx="25" cy="43" r="3.6"/><circle cx="39" cy="43" r="3.6"/></g></svg></span><h1>Waterworks fleet</h1><span class="sub" id="updated"></span><button id="theme" type="button"></button></header>
 <main>
   <section class="stats" id="stats"></section>
   <section class="card">
