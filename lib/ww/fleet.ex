@@ -15,7 +15,8 @@ defmodule Ww.Fleet do
       endpoint, asking it to stop (each endpoint decides what that means).
     * `fleet.remove_offline.v1 {}` from a subscriber: removes every offline endpoint except
       current subscribers.
-    * `fleet.broadcast.v1 {ids, text}` from the fleet's own view only: sends `agent.prompt.v1
+    * `fleet.broadcast.v1 {ids, text, broadcast?}` from the fleet's own view, or
+      `canvas.action.v1 {action: "broadcast", ...}` from a subscribed canvas: sends `agent.prompt.v1
       {text, delivery: "immediate"}` to each listed agent that is online, then reports
       `fleet.broadcast_status.v1 {broadcast, text, sessions: [{id, name, status}]}` to the
       view as sessions acknowledge (status: pending, acked, failed).
@@ -280,7 +281,7 @@ defmodule Ww.Fleet do
 
     sessions =
       for id <- ids do
-        message_id = "#{request["id"]}.#{id}"
+        message_id = "#{broadcast_id(request)}.#{id}"
         payload = %{text: text, delivery: "immediate"}
         body = %{id: message_id, to: id, type: "agent.prompt.v1", payload: payload}
 
@@ -300,7 +301,7 @@ defmodule Ww.Fleet do
     IO.puts(:stderr, "broadcast to #{length(ids)} agent(s)")
 
     tracked = %{
-      id: request["id"],
+      id: broadcast_id(request),
       to: request["from"],
       text: text,
       sessions: sessions,
@@ -349,10 +350,24 @@ defmodule Ww.Fleet do
       sessions: Enum.map(b.sessions, &Map.take(&1, [:id, :name, :status]))
     }
 
-    body = %{to: b.to, type: "fleet.broadcast_status.v1", payload: payload}
+    # Canvases only take canvas.* types, so their receipts ride on canvas.data.v1.
+    body =
+      if state.subscribers[b.to] == "canvas.data.v1",
+        do: %{to: b.to, type: "canvas.data.v1", payload: %{broadcast_status: payload}},
+        else: %{to: b.to, type: "fleet.broadcast_status.v1", payload: payload}
+
     CLI.request(:post, "/v1/messages", body, state.auth, false)
   rescue
     _ -> :ok
+  end
+
+  # The page names its broadcast so it can match receipts; through a canvas the request's
+  # message id is chosen by the canvas host, so the page passes payload.broadcast instead.
+  defp broadcast_id(request) do
+    case request["payload"]["broadcast"] do
+      id when is_binary(id) and byte_size(id) in 1..100 -> id
+      _ -> request["id"]
+    end
   end
 
   defp request_shutdown(state, id, requested_by) do
@@ -408,7 +423,12 @@ defmodule Ww.Fleet do
     case type do
       # Prompts agents, so only the fleet's own first-party view may ask: canvases forward
       # actions from agent-authored pages, which can load third-party scripts.
-      "fleet.broadcast.v1" ->
+      # From the fleet's own view, or as a canvas action from a subscribed canvas. Canvases
+      # relay actions from agent-authored pages; accepted because the fleet is single-user.
+      type
+      when type == "fleet.broadcast.v1" or
+             (type == "canvas.action.v1" and is_map_key(payload, "action") and
+                :erlang.map_get("action", payload) == "broadcast") ->
         text = payload["text"]
         ids = if is_list(payload["ids"]), do: payload["ids"], else: []
 
@@ -421,7 +441,12 @@ defmodule Ww.Fleet do
 
         targets = Enum.filter(ids, &MapSet.member?(online_agents, &1)) |> Enum.uniq()
 
-        if from == viewer and viewer != nil and is_binary(text) and String.trim(text) != "" and
+        allowed? =
+          if type == "fleet.broadcast.v1",
+            do: from == viewer and viewer != nil,
+            else: subscribers[from] == "canvas.data.v1"
+
+        if allowed? and is_binary(text) and String.trim(text) != "" and
              String.length(text) <= 10_000 and targets != [],
            do: {:broadcast, targets, text},
            else: :ignore

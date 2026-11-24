@@ -113,11 +113,11 @@ function removeOfflineButton() {
   };
 }
 
-// Broadcast (standalone view only: the fleet refuses broadcasts relayed through canvases).
-// Online agents can be selected; the message goes to each as agent.prompt.v1, and the fleet
-// reports receipts (fleet.broadcast_status.v1) that fill the modal as sessions acknowledge.
+// Broadcast: online agents can be selected; the message goes to each as agent.prompt.v1, and
+// the fleet reports receipts that fill the modal as sessions acknowledge (fleet.broadcast_status.v1
+// standalone, canvas.data.v1 {broadcast_status} inside a canvas).
 const selected = new Set();
-const canBroadcast = () => Boolean(socket);
+const canBroadcast = () => Boolean(socket || window.waterworks);
 const selectable = (e) => e.kind === "agent" && e.status === "online";
 
 function pickCell(e) {
@@ -153,10 +153,15 @@ function composer() {
 let receipt = null; // id of the broadcast shown in the modal
 $("broadcast-send").onclick = () => {
   const text = $("broadcast-text").value.trim();
-  if (!text || !selected.size || !socket) return;
+  if (!text || !selected.size || !canBroadcast()) return;
   receipt = `msg_${crypto.randomUUID()}`;
   const names = endpoints.filter((e) => selected.has(e.id));
-  socket.send(JSON.stringify({ op: "send", id: receipt, to: fleetId, type: "fleet.broadcast.v1", payload: { ids: [...selected], text } }));
+  const request = { ids: [...selected], text, broadcast: receipt };
+  if (socket) {
+    socket.send(JSON.stringify({ op: "send", id: receipt, to: fleetId, type: "fleet.broadcast.v1", payload: request }));
+  } else {
+    window.waterworks.action({ to: fleetId, action: "broadcast", ...request });
+  }
   showReceipts({ broadcast: receipt, text, sessions: names.map((e) => ({ id: e.id, name: e.name, status: "sending" })) });
   $("broadcast-text").value = "";
   selected.clear();
@@ -227,7 +232,7 @@ $("theme").onclick = () => {
 };
 
 $("q").oninput = render;
-addEventListener("waterworks", (e) => apply(e.detail));
+addEventListener("waterworks", (e) => (e.detail?.broadcast_status ? showReceipts(e.detail.broadcast_status) : apply(e.detail)));
 
 // Standalone: the URL fragment (never sent to the server) carries this viewer's credentials.
 const params = new URLSearchParams(location.hash.slice(1));

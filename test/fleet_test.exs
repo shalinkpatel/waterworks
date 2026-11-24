@@ -144,7 +144,7 @@ defmodule WwFleetTest do
     assert run.("fleet.remove_offline.v1", "ep_agent", %{}) == :ignore
   end
 
-  test "broadcast: only from the fleet's own view, only to online agents, non-empty text" do
+  test "broadcast: from its own view or a subscribed canvas, only to online agents, non-empty text" do
     endpoints = [
       %{"id" => "ep_pi", "kind" => "agent", "online" => true},
       %{"id" => "ep_pi_off", "kind" => "agent", "online" => false},
@@ -174,7 +174,15 @@ defmodule WwFleetTest do
              "action" => "broadcast",
              "ids" => ids,
              "text" => "hi"
-           }) == :ignore
+           }) == {:broadcast, ["ep_pi"], "hi"}
+
+    # A canvas that is not subscribed cannot.
+    assert run.("canvas.action.v1", "ep_other", %{
+             "action" => "broadcast",
+             "ids" => ids,
+             "text" => "hi"
+           }) ==
+             :ignore
 
     assert run.("fleet.broadcast.v1", "ep_view", %{"ids" => ids, "text" => "  "}) == :ignore
 
