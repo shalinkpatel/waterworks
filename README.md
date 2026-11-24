@@ -14,16 +14,22 @@ tool. Live, commentable canvases are included as one example tool built on it.
 
 ## Build
 
-Requires Elixir 1.20 and Erlang/OTP with Mnesia.
+Requires Elixir 1.20 and Erlang/OTP with Mnesia to build; the release bundles
+its own Erlang runtime.
 
 ```sh
 mix deps.get
-mix escript.build
+MIX_ENV=prod mix release
 ```
 
-The generated `./ww` executable contains the CLI and daemon. Runtime
-configuration is supplied through command-line options and environment
-variables, not written into the executable.
+`./ww` is a small committed wrapper that runs the CLI and daemon from that
+release (`_build/prod/rel/ww`); symlink it onto your `PATH` (it resolves the
+release next to the real script, or set `WW_RELEASE`). Rebuild the release after
+pulling. It is a release rather than an escript so native libraries (NIFs) can be
+loaded. Runtime configuration is supplied through command-line options and
+environment variables, not written into the release; a distributed node takes
+its cookie from `~/.erlang.cookie` (or `-setcookie` in `ERL_AFLAGS`), not the
+release's own generated one.
 
 ## Start a daemon
 
@@ -103,7 +109,7 @@ page, not generic arbitrary-HTML hosting.
 ## Demo
 
 ```sh
-mix escript.build
+MIX_ENV=prod mix release
 scripts/demo.sh        # Ctrl-C to stop; or run in the background and use scripts/demo.sh stop
 ```
 

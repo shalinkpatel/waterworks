@@ -8,9 +8,14 @@ defmodule Ww.MixProject do
       elixir: "~> 1.20",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      escript: [main_module: Ww.CLI, app: nil],
+      releases: releases(),
       deps: deps()
     ]
+  end
+
+  # `./ww` (a committed wrapper) runs the CLI through this release: `MIX_ENV=prod mix release`.
+  defp releases do
+    [ww: [include_executables_for: [:unix]]]
   end
 
   # Run "mix help compile.app" to learn about applications.

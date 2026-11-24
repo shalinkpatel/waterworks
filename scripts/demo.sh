@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Live canvas demo: a scratch daemon, a report-style page with streamed metrics, and a small
-# responder that answers comments. Usage: scripts/demo.sh [stop]. Needs ./ww (mix escript.build),
+# responder that answers comments. Usage: scripts/demo.sh [stop]. Needs the release (MIX_ENV=prod mix release),
 # curl, jq, and openssl. WW_DEMO_PORT (default 7470) and WW_OPEN_BROWSER=0 are optional.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -31,7 +31,7 @@ if [ "${1:-}" = "stop" ]; then
 fi
 
 for tool in curl jq openssl; do command -v "$tool" >/dev/null || { echo "demo needs $tool" >&2; exit 1; }; done
-[ -x ./ww ] || { echo "build ./ww first: mix escript.build" >&2; exit 1; }
+[ -x _build/prod/rel/ww/bin/ww ] || { echo "build the release first: MIX_ENV=prod mix release" >&2; exit 1; }
 if curl -fsS "$url/v1/health" >/dev/null 2>&1; then
   echo "port $port is in use; run scripts/demo.sh stop or set WW_DEMO_PORT" >&2
   exit 1

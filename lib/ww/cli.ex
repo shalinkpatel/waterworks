@@ -374,13 +374,30 @@ defmodule Ww.CLI do
 
       cookie_file = Path.join(System.user_home!(), ".erlang.cookie")
 
-      unless Regex.match?(~r/(^|\s)-setcookie\s+\S/, flags) || File.exists?(cookie_file) do
-        raise("a distributed node needs a cookie: put it in ~/.erlang.cookie (mode 0400)")
-      end
+      # A release boots with its own generated cookie (releases/COOKIE), so the shared one is
+      # set in-process after the node starts; it never appears in a command line.
+      cookie =
+        case Regex.run(~r/(?:^|\s)-setcookie\s+(\S+)/, flags) do
+          [_, explicit] ->
+            explicit
 
-      {_, 0} = System.cmd("epmd", ["-daemon"])
+          nil ->
+            case File.read(cookie_file) do
+              {:ok, contents} -> String.trim(contents)
+              _ -> raise("a distributed node needs a cookie: put it in ~/.erlang.cookie (mode 0400)")
+            end
+        end
+
+      {_, 0} = System.cmd(epmd(), ["-daemon"])
       {:ok, _} = Node.start(String.to_atom(name), :longnames)
+      Node.set_cookie(String.to_atom(cookie))
     end
+  end
+
+  # The release bundles ERTS, epmd included; fall back to PATH when run from mix.
+  defp epmd do
+    bundled = Path.join([:code.root_dir(), "erts-#{:erlang.system_info(:version)}", "bin", "epmd"])
+    if File.exists?(bundled), do: bundled, else: "epmd"
   end
 
   defp auth_headers do

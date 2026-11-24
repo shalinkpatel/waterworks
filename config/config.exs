@@ -1,7 +1,7 @@
 import Config
 
 # Secrets (WW_ADMIN_TOKEN) and WW_JOIN are read at runtime by `ww serve`, never here:
-# config is evaluated at build time and would be baked into the escript.
+# config is evaluated at build time and would be baked into the release.
 config :ww,
   http: true,
   port: 7420,
