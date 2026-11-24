@@ -11,7 +11,9 @@ let socket = null;
 function localTime(iso) {
   const t = new Date(String(iso).replace(/^updated /, "")); // older fleets prefixed "updated "
   if (!iso || isNaN(t)) return iso || "live";
-  return `updated ${t.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium", timeZoneName: "short" })}`;
+  // dateStyle/timeStyle cannot be combined with timeZoneName (throws "Invalid option").
+  const format = { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" };
+  return `updated ${t.toLocaleString(undefined, format)}`;
 }
 
 function apply(state) {
