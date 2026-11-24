@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Waterworks fleet</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Baseten design system tokens (basevibe colors_and_type.css). */
+  :root {
+    --ink: #00120b; --gray-50: #f4f9f3; --gray-100: #dee4de; --gray-500: #869089; --gray-700: #5a675e;
+    --gray-850: #203026; --gray-900: #0c1d13; --green-50: #e5fcef; --green-400: #19e76e; --green-700: #0e863f;
+    --blue-50: #f0f6ff; --blue-600: #1960d3; --pink: #ffa9fd; --cream: #f1f7ef;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 Inter, system-ui, sans-serif; color: var(--ink); background: var(--cream); }
+  header { background: var(--gray-900); color: #fff; padding: 22px 28px; display: flex; align-items: baseline; gap: 14px; }
+  header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  header .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green-400); box-shadow: 0 0 10px var(--green-400); align-self: center; }
+  header .sub { font: 12px "IBM Plex Mono", monospace; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.08em; }
+  main { padding: 24px 28px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 22px; }
+  .stat { background: #fff; border: 1px solid var(--gray-100); border-radius: 12px; padding: 16px 18px; border-top: 4px solid var(--c); }
+  .stat .label { font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.08em; color: var(--gray-700); }
+  .stat .value { font-size: 34px; font-weight: 700; margin-top: 4px; }
+  .card { background: #fff; border: 1px solid var(--gray-100); border-radius: 12px; overflow: hidden; }
+  .toolbar { display: flex; gap: 18px; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--gray-100); flex-wrap: wrap; }
+  .toolbar h2 { margin: 0 auto 0 0; font-size: 15px; }
+  .group { display: flex; gap: 6px; align-items: center; }
+  .group > span { font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; color: var(--gray-700); margin-right: 2px; }
+  .chip { border: 1px solid var(--gray-100); background: var(--gray-50); border-radius: 999px; padding: 4px 11px; font: 500 12px Inter, sans-serif; cursor: pointer; color: var(--gray-850); }
+  .chip[aria-pressed="true"] { background: var(--gray-900); border-color: var(--gray-900); color: #fff; }
+  .toolbar input { border: 1px solid var(--gray-100); border-radius: 8px; padding: 6px 10px; font: 13px Inter, sans-serif; width: 200px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gray-700);
+       background: var(--gray-50); padding: 10px 18px; cursor: pointer; user-select: none; white-space: nowrap; }
+  th[aria-sort="ascending"]::after { content: " ▲"; color: var(--green-700); }
+  th[aria-sort="descending"]::after { content: " ▼"; color: var(--green-700); }
+  td { padding: 10px 18px; border-top: 1px solid var(--gray-100); }
+  tr:hover td { background: var(--gray-50); }
+  td.mono { font: 12px "IBM Plex Mono", monospace; color: var(--gray-700); }
+  .badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; }
+  .online { background: var(--green-50); color: var(--green-700); }
+  .online::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green-400); }
+  .offline { background: var(--gray-50); color: var(--gray-500); }
+  .agent { background: var(--blue-50); color: var(--blue-600); }
+  .tool { background: #fff0fe; color: #a2329e; }
+  .empty { padding: 24px; text-align: center; color: var(--gray-500); }
+</style>
+</head>
+<body>
+<header><span class="dot"></span><h1>Waterworks fleet</h1><span class="sub" id="updated"></span></header>
+<main>
+  <section class="stats" id="stats"></section>
+  <section class="card">
+    <div class="toolbar">
+      <h2>Endpoints</h2>
+      <div class="group" data-filter="kind"><span>Kind</span></div>
+      <div class="group" data-filter="type"><span>Type</span></div>
+      <div class="group" data-filter="status"><span>Status</span></div>
+      <input id="q" type="search" placeholder="Search name, id, cwd" aria-label="Search endpoints">
+    </div>
+    <table>
+      <thead><tr id="head"></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+</main>
+<script>
+  // Filled by `ww fleet`: each dashboard.data.v1 {endpoints, updated} replaces the list.
+  let endpoints = [];
+  let updated = "waiting for data";
+
+  const cols = ["name", "kind", "type", "status", "id", "cwd"];
+  const filters = { kind: new Set(), type: new Set(), status: new Set() };  // empty = all
+  let sort = { col: "status", dir: -1 };                    // online first
+
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, props = {}, text) => Object.assign(document.createElement(tag), props, text != null ? { textContent: text } : {});
+
+  function stats() {
+    const count = (f) => endpoints.filter(f).length;
+    const items = [
+      ["Registered", endpoints.length, "#19e76e"], ["Online", count((e) => e.status === "online"), "#0e863f"],
+      ["Agents", count((e) => e.kind === "agent"), "#1960d3"], ["Tools", count((e) => e.kind === "tool"), "#ffa9fd"],
+    ];
+    $("stats").replaceChildren(...items.map(([label, value, c]) => {
+      const s = el("div", { className: "stat" });
+      s.style.setProperty("--c", c);
+      s.append(el("div", { className: "label" }, label), el("div", { className: "value" }, value));
+      return s;
+    }));
+  }
+
+  function chips() {
+    for (const group of document.querySelectorAll("[data-filter]")) {
+      const key = group.dataset.filter;
+      const values = [...new Set(endpoints.map((e) => e[key]))].sort();
+      group.querySelectorAll("button").forEach((b) => b.remove());
+      for (const v of values) {
+        const b = el("button", { className: "chip", type: "button" }, `${v} (${endpoints.filter((e) => e[key] === v).length})`);
+        b.setAttribute("aria-pressed", filters[key].has(v));
+        b.onclick = () => { filters[key].has(v) ? filters[key].delete(v) : filters[key].add(v); render(); };
+        group.append(b);
+      }
+    }
+  }
+
+  function render() {
+    stats(); chips();
+    $("updated").textContent = updated;
+    $("head").replaceChildren(...cols.map((c) => {
+      const th = el("th", { scope: "col", tabIndex: 0 }, c);
+      if (sort.col === c) th.setAttribute("aria-sort", sort.dir > 0 ? "ascending" : "descending");
+      th.onclick = th.onkeydown = (ev) => {
+        if (ev.type === "keydown" && ev.key !== "Enter") return;
+        sort = { col: c, dir: sort.col === c ? -sort.dir : 1 }; render();
+      };
+      return th;
+    }));
+    const q = $("q").value.toLowerCase();
+    const rows = endpoints
+      .filter((e) => Object.entries(filters).every(([k, set]) => !set.size || set.has(e[k])))
+      .filter((e) => !q || [e.name, e.id, e.cwd].some((v) => v.toLowerCase().includes(q)))
+      .sort((a, b) => sort.dir * a[sort.col].localeCompare(b[sort.col]) || a.name.localeCompare(b.name));
+    $("rows").replaceChildren(...(rows.length ? rows.map((e) => {
+      const tr = el("tr");
+      tr.append(
+        el("td", {}, e.name),
+        el("td", {}, "").appendChild(el("span", { className: `badge ${e.kind}` }, e.kind)).parentNode,
+        el("td", { className: "mono" }, e.type),
+        el("td", {}, "").appendChild(el("span", { className: `badge ${e.status}` }, e.status)).parentNode,
+        el("td", { className: "mono" }, e.id),
+        el("td", { className: "mono" }, e.cwd || "—"),
+      );
+      return tr;
+    }) : [Object.assign(el("tr"), { innerHTML: '<td class="empty" colspan="6">No endpoints match</td>' })]));
+  }
+
+  $("q").oninput = render;
+  addEventListener("waterworks", (e) => {
+    if (Array.isArray(e.detail?.endpoints)) { endpoints = e.detail.endpoints; updated = e.detail.updated || "live"; render(); }
+  });
+  render();
+</script>
+</body>
+</html>

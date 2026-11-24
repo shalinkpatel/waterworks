@@ -130,6 +130,12 @@ defmodule Ww.CLI do
     if opts[:watch], do: watch(file, published, publish)
   end
 
+  defp client("fleet", args) do
+    {opts, _, invalid} = OptionParser.parse(args, switches: [interval: :integer, open: :boolean])
+    if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
+    Ww.Fleet.run((opts[:interval] || 5) * 1000, Keyword.get(opts, :open, true))
+  end
+
   defp client("discover", args) do
     {opts, _, _} =
       OptionParser.parse(args,
@@ -198,7 +204,8 @@ defmodule Ww.CLI do
         "dashboard.reply.v1",
         "dashboard.clear.v1"
       ],
-      emits: ["dashboard.comment.v1", "core.error.v1"]
+      emits: ["dashboard.comment.v1", "core.error.v1"],
+      metadata: %{tool: "dashboard"}
     }
   end
 
@@ -206,7 +213,8 @@ defmodule Ww.CLI do
   def dashboard_url(id, token),
     do: base_url() <> "/dashboard#" <> URI.encode_query(%{"endpoint" => id, "token" => token})
 
-  defp request(method, path, body \\ nil, extra_headers \\ [], authenticate \\ true) do
+  @doc false
+  def request(method, path, body \\ nil, extra_headers \\ [], authenticate \\ true) do
     headers = if authenticate, do: auth_headers(), else: []
     headers = http_headers(headers ++ extra_headers)
     url = String.to_charlist(base_url() <> path)
@@ -370,7 +378,8 @@ defmodule Ww.CLI do
 
   defp endpoint_id, do: System.get_env("WW_ENDPOINT") || raise("WW_ENDPOINT is required")
 
-  defp base_url,
+  @doc false
+  def base_url,
     do: System.get_env("WW_URL", "http://127.0.0.1:7420") |> String.trim_trailing("/")
 
   defp http_headers(headers) do
@@ -410,6 +419,7 @@ defmodule Ww.CLI do
     ww register --kind agent|tool --name NAME [--accepts TYPE] [--emits TYPE] [--metadata K=V]
     ww dashboard [--title TITLE]
     ww publish --to DASHBOARD_ID --file PAGE.html [--title TITLE] [--watch]  (--watch sends deltas)
+    ww fleet [--interval SECONDS] [--no-open]  (live dashboard of every endpoint)
     ww discover [--kind KIND] [--name NAME] [--accepts TYPE] [--online]
     ww inspect ENDPOINT_ID
     ww send --to ENDPOINT_ID --type TYPE [--data JSON] [--id ID] [--reply-to ID]

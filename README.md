@@ -331,9 +331,13 @@ mailbox history.
 
 ### Fleet dashboard
 
-`scripts/fleet.sh` registers a dashboard and keeps it showing every registered
-agent and tool (online first, with counts). It needs `WW_ADMIN_TOKEN`, prints
-and opens the dashboard URL, and re-renders only when the fleet changes. Each
+`ww fleet` registers a dashboard showing every registered agent and tool, with
+counts, sorting, kind/status filters, and search. It needs `WW_ADMIN_TOKEN`,
+prints and opens the dashboard URL (`--no-open` to skip), publishes the page
+once, and sends `dashboard.data.v1` only when the fleet changes (polled every
+`--interval` seconds, default 5). Its Type column reads `metadata.harness` for agents (the Pi adapter
+sets `pi`) and `metadata.tool` for tools (dashboards set `dashboard`); register
+your own with `--metadata harness=...` or `--metadata tool=...`. Each
 run registers one more endpoint, since endpoints cannot be deregistered yet.
 
 ## Tests

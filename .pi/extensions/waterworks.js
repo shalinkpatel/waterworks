@@ -184,7 +184,7 @@ export default function waterworks(pi) {
               name: `pi-${process.pid}`,
               accepts: acceptedTypes,
               emits: ["demo.echoed.v1", "core.error.v1", ...dashboardTypes],
-              metadata: { cwd: ctx.cwd, pid: String(process.pid) },
+              metadata: { harness: "pi", cwd: ctx.cwd, pid: String(process.pid) },
             },
             { "x-ww-admin-token": admin },
           );
@@ -295,7 +295,7 @@ export default function waterworks(pi) {
       const response = await request(
         "POST",
         "/v1/endpoints",
-        { kind: "tool", name: params.title, accepts: dashboardTypes, emits: ["dashboard.comment.v1", "core.error.v1"] },
+        { kind: "tool", name: params.title, accepts: dashboardTypes, emits: ["dashboard.comment.v1", "core.error.v1"], metadata: { tool: "dashboard" } },
         { "x-ww-admin-token": admin },
       );
       const id = response.endpoint.id;
