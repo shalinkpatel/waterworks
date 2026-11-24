@@ -122,6 +122,86 @@ defmodule WwTransportTest do
     assert accepted["message"]["reply_to"] == sent["id"]
   end
 
+  test "HTTP rename and deregistration" do
+    {agent, agent_token} = register("agent", "pi-1")
+    {other, other_token} = register("tool", "other")
+    {victim, victim_token} = register("tool", "victim")
+
+    assert {201, _} =
+             TestHTTP.request(
+               :post,
+               "/v1/messages",
+               %{to: victim.id, type: "x.v1", payload: %{}},
+               TestHTTP.auth(agent.id, agent_token)
+             )
+
+    # Rename: only yourself, and only name/metadata.
+    assert {401, _} =
+             TestHTTP.request(
+               :patch,
+               "/v1/endpoints/#{agent.id}",
+               %{name: "x"},
+               TestHTTP.auth(other.id, other_token)
+             )
+
+    assert {200, %{"endpoint" => renamed}} =
+             TestHTTP.request(
+               :patch,
+               "/v1/endpoints/#{agent.id}",
+               %{name: "fix auth", metadata: %{harness: "pi"}},
+               TestHTTP.auth(agent.id, agent_token)
+             )
+
+    assert renamed["name"] == "fix auth"
+    assert renamed["metadata"] == %{"harness" => "pi"}
+    assert renamed["kind"] == "agent"
+
+    # Another endpoint cannot delete you; the admin token or your own token can.
+    assert {401, _} =
+             TestHTTP.request(
+               :delete,
+               "/v1/endpoints/#{victim.id}",
+               nil,
+               TestHTTP.auth(other.id, other_token)
+             )
+
+    assert {200, _} =
+             TestHTTP.request(:delete, "/v1/endpoints/#{victim.id}", nil, [
+               {"x-ww-admin-token", @admin}
+             ])
+
+    assert {401, _} =
+             TestHTTP.request(
+               :get,
+               "/v1/endpoints/#{victim.id}/history",
+               nil,
+               TestHTTP.auth(victim.id, victim_token)
+             )
+
+    assert :mnesia.dirty_index_read(:ww_messages, victim.id, :to) == []
+
+    assert {404, %{"error" => "recipient_not_found"}} =
+             TestHTTP.request(
+               :post,
+               "/v1/messages",
+               %{to: victim.id, type: "x.v1", payload: %{}},
+               TestHTTP.auth(agent.id, agent_token)
+             )
+
+    assert {200, _} =
+             TestHTTP.request(
+               :delete,
+               "/v1/endpoints/#{other.id}",
+               nil,
+               TestHTTP.auth(other.id, other_token)
+             )
+
+    assert {404, _} =
+             TestHTTP.request(:delete, "/v1/endpoints/#{other.id}", nil, [
+               {"x-ww-admin-token", @admin}
+             ])
+  end
+
   defp register(kind, name, accepts \\ []) do
     assert {201, response} =
              TestHTTP.request(

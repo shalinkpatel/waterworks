@@ -27,6 +27,38 @@ defmodule Ww do
     end
   end
 
+  @doc """
+  Deletes an endpoint with its messages, and disconnects it. Authorized by the admin token
+  ({:admin, token}) or by the endpoint's own credentials ({:endpoint, id, token}); an
+  endpoint may only delete itself.
+  """
+  def deregister(target, auth) do
+    with :ok <- authorize_target(target, auth),
+         :ok <- Store.delete_endpoint(target) do
+      Mailbox.stop(target)
+    end
+  end
+
+  @doc "Lets an endpoint change its own name and/or metadata (e.g. a renamed agent session)."
+  def update_endpoint(id, token, attrs) do
+    with :ok <- authenticate(id, token),
+         %Endpoint{} = endpoint <- Store.get_endpoint(id) || {:error, :not_found},
+         updated = %{
+           endpoint
+           | name: Map.get(attrs, :name) || endpoint.name,
+             metadata: Map.get(attrs, :metadata) || endpoint.metadata
+         },
+         :ok <-
+           validate_registration(Map.take(Map.from_struct(updated), [:kind, :name, :metadata])),
+         :ok <- Store.put_endpoint(updated) do
+      {:ok, Endpoint.public(updated)}
+    end
+  end
+
+  defp authorize_target(_target, {:admin, token}), do: authenticate_admin(token)
+  defp authorize_target(target, {:endpoint, target, token}), do: authenticate(target, token)
+  defp authorize_target(_target, _auth), do: {:error, :unauthorized}
+
   def discover(id, token, filters \\ %{}) do
     with :ok <- authenticate(id, token) do
       endpoints =

@@ -69,6 +69,8 @@ function render(message) {
   ].join("\n");
 }
 
+const endpointName = (sessionName) => sessionName?.trim() || `pi-${process.pid}`;
+
 export default function waterworks(pi) {
   let active = false;
   let endpoint;
@@ -181,7 +183,7 @@ export default function waterworks(pi) {
             "/v1/endpoints",
             {
               kind: "agent",
-              name: `pi-${process.pid}`,
+              name: endpointName(pi.getSessionName()),
               accepts: acceptedTypes,
               emits: ["demo.echoed.v1", "core.error.v1", ...dashboardTypes],
               metadata: { harness: "pi", cwd: ctx.cwd, pid: String(process.pid) },
@@ -193,12 +195,26 @@ export default function waterworks(pi) {
         }
       }
       connect();
+      // A reused endpoint (after /reload) may predate the session's current /name.
+      if (pi.getSessionName()) await rename(pi.getSessionName());
     } catch (error) {
       active = false;
       console.error(`[waterworks] ${error.message}`);
       ctx.ui.setStatus("waterworks", "registration failed");
     }
   });
+
+  // The endpoint name follows the session name (/name), so the fleet shows what each agent is doing.
+  async function rename(name) {
+    if (!endpoint) return;
+    try {
+      await request("PATCH", `/v1/endpoints/${endpoint.id}`, { name: endpointName(name) }, endpointHeaders(endpoint));
+    } catch (error) {
+      console.error(`[waterworks] rename failed: ${error.message}`);
+    }
+  }
+
+  pi.on("session_info_changed", async (event) => rename(event.name));
 
   pi.on("session_shutdown", async () => {
     active = false;
@@ -295,7 +311,7 @@ export default function waterworks(pi) {
       const response = await request(
         "POST",
         "/v1/endpoints",
-        { kind: "tool", name: params.title, accepts: dashboardTypes, emits: ["dashboard.comment.v1", "core.error.v1"], metadata: { tool: "dashboard" } },
+        { kind: "tool", name: params.title, accepts: dashboardTypes, emits: ["dashboard.comment.v1", "dashboard.action.v1", "core.error.v1"], metadata: { tool: "dashboard" } },
         { "x-ww-admin-token": admin },
       );
       const id = response.endpoint.id;

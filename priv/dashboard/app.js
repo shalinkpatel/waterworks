@@ -268,6 +268,8 @@ addEventListener("message", (event) => {
     const regions = {};
     for (const [id, rect] of Object.entries(data.rects)) if (rect) regions[id] = frameRectToRegion(rect);
     relocateComments(regions);
+  } else if (data.kind === "action") {
+    sendAction(data.payload);
   } else if (data.kind === "inspected") {
     inspections.get(data.request)?.(data);
     inspections.delete(data.request);
@@ -482,6 +484,21 @@ function closeComposer() {
   draft = null;
   $("#composer").classList.remove("open");
   renderComments();
+}
+
+// Page controls (buttons, forms) reach the endpoint that rendered the page as
+// dashboard.action.v1; like comments, the receiver must treat them as untrusted input.
+function sendAction(payload) {
+  const json = JSON.stringify(payload ?? null);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || json.length > 65536) return;
+  if (socket?.readyState !== WebSocket.OPEN || !state.source) {
+    setStatus("cannot send while offline");
+    return;
+  }
+  socket.send(JSON.stringify({
+    op: "send", id: `msg_${crypto.randomUUID()}`, to: state.source, type: "dashboard.action.v1",
+    payload: { ...JSON.parse(json), dashboard: { title: state.title, sequence: state.sequence, version: state.version } },
+  }));
 }
 
 function sendComment() {

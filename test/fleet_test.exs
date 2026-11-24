@@ -62,4 +62,13 @@ defmodule WwFleetTest do
              %{id: "ep_d", name: "x", kind: "tool", type: "echo", status: "offline", cwd: ""}
            ]
   end
+
+  test "removals are honoured only for existing offline endpoints other than the dashboard" do
+    endpoints = [%{"id" => "ep_dead", "online" => false}, %{"id" => "ep_live", "online" => true}]
+    assert Ww.Fleet.removable?(%{"action" => "remove", "id" => "ep_dead"}, endpoints, "ep_self")
+    refute Ww.Fleet.removable?(%{"action" => "remove", "id" => "ep_live"}, endpoints, "ep_self")
+    refute Ww.Fleet.removable?(%{"action" => "remove", "id" => "ep_gone"}, endpoints, "ep_self")
+    refute Ww.Fleet.removable?(%{"action" => "remove", "id" => "ep_dead"}, endpoints, "ep_dead")
+    refute Ww.Fleet.removable?(%{"action" => "nuke", "id" => "ep_dead"}, endpoints, "ep_self")
+  end
 end

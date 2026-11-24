@@ -28,6 +28,9 @@ defmodule WwWeb.Socket do
     push(%{op: "message", message: Ww.Wire.message(message)}, state)
   end
 
+  def handle_info(:ww_deregistered, state),
+    do: {:stop, :normal, {1000, "deregistered"}, state}
+
   def handle_info(:keepalive, state) do
     Process.send_after(self(), :keepalive, @keepalive)
     {:push, {:ping, ""}, state}

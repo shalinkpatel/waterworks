@@ -146,6 +146,15 @@ defmodule Ww.CLI do
     request(:get, "/v1/endpoints" <> query_string(query)) |> print()
   end
 
+  # With WW_ADMIN_TOKEN any endpoint; otherwise only the WW_ENDPOINT itself.
+  defp client("deregister", [id]) do
+    case System.get_env("WW_ADMIN_TOKEN") do
+      nil -> request(:delete, "/v1/endpoints/#{id}")
+      admin -> request(:delete, "/v1/endpoints/#{id}", nil, [{"x-ww-admin-token", admin}], false)
+    end
+    |> print()
+  end
+
   defp client("inspect", [id]), do: request(:get, "/v1/endpoints/#{id}") |> print()
 
   defp client("history", _),
@@ -204,7 +213,7 @@ defmodule Ww.CLI do
         "dashboard.reply.v1",
         "dashboard.clear.v1"
       ],
-      emits: ["dashboard.comment.v1", "core.error.v1"],
+      emits: ["dashboard.comment.v1", "dashboard.action.v1", "core.error.v1"],
       metadata: %{tool: "dashboard"}
     }
   end
@@ -422,6 +431,7 @@ defmodule Ww.CLI do
     ww fleet [--interval SECONDS] [--no-open]  (live dashboard of every endpoint)
     ww discover [--kind KIND] [--name NAME] [--accepts TYPE] [--online]
     ww inspect ENDPOINT_ID
+    ww deregister ENDPOINT_ID  (deletes it and its messages; admin token, or self)
     ww send --to ENDPOINT_ID --type TYPE [--data JSON] [--id ID] [--reply-to ID]
     ww tail [--ack]
     ww echo

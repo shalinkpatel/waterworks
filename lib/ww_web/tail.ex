@@ -24,6 +24,7 @@ defmodule WwWeb.Tail do
     value =
       receive do
         {:ww_message, message} -> %{op: "message", message: Ww.Wire.message(message)}
+        :ww_deregistered -> %{op: "deregistered"}
       after
         15_000 -> %{op: "heartbeat"}
       end
@@ -31,7 +32,7 @@ defmodule WwWeb.Tail do
     case chunk(conn, Jason.encode!(value) <> "\n") do
       {:ok, conn} ->
         if auto_ack && value.op == "message", do: :ok = Ww.acknowledge_as(id, value.message.id)
-        loop(conn, id, auto_ack)
+        if value.op == "deregistered", do: conn, else: loop(conn, id, auto_ack)
 
       {:error, _} ->
         conn
