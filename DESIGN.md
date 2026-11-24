@@ -111,13 +111,13 @@ uses endpoint credentials supplied by the environment. Credentials are kept in
 memory, never added to the transcript. The socket reconnects with the same
 endpoint identity. Supported messages are injected with `pi.sendMessage()` using
 `steer` delivery and acknowledged after Pi accepts them into the session;
-acknowledgement does not mean the model finished working. Only dashboard
+acknowledgement does not mean the model finished working. Only canvas
 comments, errors, echoes, and messages with `payload.delivery: "immediate"` do
 this; every other message stays unacknowledged in an in-session inbox (so a
 restart redelivers it) until the model calls `ww_inbox`, which returns and
-acknowledges them. The footer shows the queued count. Dashboard comments are
-accepted only from dashboards the session opened or published to (others get
-`core.error.v1 {error: "unknown_dashboard"}`), and page-derived comment fields are
+acknowledges them. The footer shows the queued count. Canvas comments are
+accepted only from canvases the session opened or published to (others get
+`core.error.v1 {error: "unknown_canvas"}`), and page-derived comment fields are
 presented to the model as untrusted data. The model sends structured
 replies through the extension's `ww_send` tool and discovers peers through
 `ww_discover`.
@@ -149,32 +149,32 @@ The `disc_copies` tables retain all history in RAM as well as on disk. Retention
 large-payload storage, automatic partition recovery, and stronger ownership are
 intentionally deferred until actual operating requirements justify them.
 
-## Example tool: live dashboards
+## Example tool: live canvases
 
-Dashboards are one tool built on the mailbox primitives above, not part of the core. Any tool can be built the same way: register an endpoint, accept and emit typed messages.
+Canvases are one tool built on the mailbox primitives above, not part of the core. Any tool can be built the same way: register an endpoint, accept and emit typed messages.
 
-A dashboard is an ordinary tool endpoint whose page is served at `/dashboard`.
-Its state is a pure fold over its mailbox (`priv/dashboard/core.js`):
-`dashboard.render.v1` replaces it, `dashboard.patch.v1` upserts, removes, and
-appends points, and `dashboard.reply.v1` attaches replies to comments. Messages
+A canvas is an ordinary tool endpoint whose page is served at `/canvas`.
+Its state is a pure fold over its mailbox (`priv/canvas/core.js`):
+`canvas.render.v1` replaces it, `canvas.patch.v1` upserts, removes, and
+appends points, and `canvas.reply.v1` attaches replies to comments. Messages
 at or below the last applied sequence are skipped, so replaying history and then
 streaming pending messages over the socket yields each message once; this is
 how a reload rebuilds the page. Region comments are sent as
-`dashboard.comment.v1` to the endpoint that last rendered or patched the page,
-with the region as dashboard fractions and the overlapping panels. Because the
-page holds the dashboard token, panel content is rendered only as text and SVG
+`canvas.comment.v1` to the endpoint that last rendered or patched the page,
+with the region as canvas fractions and the overlapping panels. Because the
+page holds the canvas token, panel content is rendered only as text and SVG
 attributes, and the token stays in the URL fragment and tab storage.
 
-Page mode (`dashboard.render.v1 {html}`) runs agent-authored HTML, such as
-rich reports, in an iframe loaded from `/dashboard/frame`, which is served
+Page mode (`canvas.render.v1 {html}`) runs agent-authored HTML, such as
+rich reports, in an iframe loaded from `/canvas/frame`, which is served
 with a `sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox` CSP
 and has the `sandbox` attribute (popups it opens, such as links in new tabs, are
-ordinary pages with no access to the dashboard's token),
+ordinary pages with no access to the canvas's token),
 so the page has an opaque origin and cannot read the host document, its storage,
 or call the authenticated API. The host posts the HTML to the frame's loader,
 which writes it and appends `helper.js`. The helper reports the page height (the
 frame is sized to its content so region coordinates stay stable), delivers
-`dashboard.data.v1` payloads as `waterworks` events, and answers region
+`canvas.data.v1` payloads as `waterworks` events, and answers region
 inspections with the heading, text, and ids under a rectangle or the page's
 text selection. Each render creates a new frame; data since the last render is
 replayed into it in sequence order.
@@ -185,17 +185,17 @@ widen or narrow, click or Enter to pick, keys forwarded by the host) and
 describes the element with a CSS path: its id, or `tag:nth-of-type` steps.
 Comments live in the browser tab; element comments store that selector, and the
 host asks the frame to locate it again whenever the page renders or resizes, so
-markers follow their elements. `dashboard.clear.v1` removes markers by comment
+markers follow their elements. `canvas.clear.v1` removes markers by comment
 ID or all made before the clear; like everything else it is replayed from
 history.
 
-`dashboard.delta.v1 {base, ops}` publishes a new page version as line edits.
+`canvas.delta.v1 {base, ops}` publishes a new page version as line edits.
 The page state tracks `revision`, the message ID of the current page; a delta
 applies only if `base` equals it and its ops consume the whole base, so a delta
 can never silently corrupt a page. Otherwise the page keeps its version and the
 host replies `core.error.v1 {error: "delta_base_mismatch", base, expected}` to
 the sender, with an ID derived from the delta so history replays do not repeat
-it. Publishers diff against their own last publish; one publisher per dashboard
+it. Publishers diff against their own last publish; one publisher per canvas
 is the expected case, and a mismatch is the signal to send a full page. The
 router still treats deltas as opaque payloads.
 

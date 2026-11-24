@@ -7,7 +7,7 @@ const agent = api(base, { id: AGENT_ID, token: AGENT_TOKEN });
 const send = (type, payload, extra = {}) => agent("POST", "/v1/messages", { to: dash.id, type, payload, ...extra });
 
 // Sent before the page exists, so the page must rebuild it from history.
-await send("dashboard.render.v1", {
+await send("canvas.render.v1", {
   title: "Fleet health",
   panels: [
     { id: "qps", kind: "stat", title: "QPS", value: 1200, unit: "req/s" },
@@ -19,7 +19,7 @@ await send("dashboard.render.v1", {
 const browser = await launch(CHROME);
 try {
   const { cdp, evaluate, rect, mouse, click, key, drag } = browser;
-  await cdp("Page.navigate", { url: `${base}/dashboard#${new URLSearchParams({ endpoint: dash.id, token: dash.token })}` });
+  await cdp("Page.navigate", { url: `${base}/canvas#${new URLSearchParams({ endpoint: dash.id, token: dash.token })}` });
 
   await until("history render", () => evaluate(`document.querySelector('[data-panel="qps"] .value')?.textContent === "1,200 req/s"`));
   await until("live socket", () => evaluate(`document.querySelector("#status").textContent === "live"`));
@@ -28,7 +28,7 @@ try {
     noInjectedHtml: await evaluate(`document.querySelectorAll("#panels img").length === 0`),
   };
 
-  await send("dashboard.patch.v1", {
+  await send("canvas.patch.v1", {
     panels: [{ id: "qps", kind: "stat", title: "QPS", value: 1500, unit: "req/s" }],
     append: [{ panel: "lat", series: "p50", points: [[2, 30]] }],
   });
@@ -36,11 +36,11 @@ try {
   await until("live append", () => evaluate(`document.querySelector('[data-panel="lat"] .legend').textContent.includes("p50: 30")`));
 
   // A malformed panel or patch must not break the page or the messages after it.
-  await send("dashboard.patch.v1", { panels: [{ id: "bad", kind: "line", title: "Bad", series: "nope" }] });
-  await send("dashboard.patch.v1", { panels: [{ id: "bars", kind: "bar", title: "Bars", bars: 7 }] });
-  await send("dashboard.patch.v1", { remove: ["bad", "bars"], panels: [{ id: "after", kind: "text", title: "After", text: "still live" }] });
+  await send("canvas.patch.v1", { panels: [{ id: "bad", kind: "line", title: "Bad", series: "nope" }] });
+  await send("canvas.patch.v1", { panels: [{ id: "bars", kind: "bar", title: "Bars", bars: 7 }] });
+  await send("canvas.patch.v1", { remove: ["bad", "bars"], panels: [{ id: "after", kind: "text", title: "After", text: "still live" }] });
   await until("survives malformed panels", () => evaluate(`document.querySelector('[data-panel="after"] p')?.textContent === "still live"`));
-  await send("dashboard.patch.v1", { remove: ["after"] });
+  await send("canvas.patch.v1", { remove: ["after"] });
   await until("cleanup", () => evaluate(`!document.querySelector('[data-panel="after"]')`));
   checks.survivesMalformed = true;
 
@@ -54,14 +54,14 @@ try {
   await until("comment accepted", () => evaluate(`document.querySelector("#comments").textContent.includes("sent")`));
 
   const comment = await until("comment in agent mailbox", async () =>
-    (await agent("GET", `/v1/endpoints/${AGENT_ID}/history`)).messages.find((m) => m.type === "dashboard.comment.v1"),
+    (await agent("GET", `/v1/endpoints/${AGENT_ID}/history`)).messages.find((m) => m.type === "canvas.comment.v1"),
   );
-  checks.commentFromDashboard = comment.from === dash.id;
+  checks.commentFromCanvas = comment.from === dash.id;
   checks.commentText = comment.payload.text === "This spike looks wrong";
   checks.commentPanels = JSON.stringify(comment.payload.panels.map((p) => p.id)) === '["qps"]';
   checks.commentRegion = comment.payload.region.width > 0 && comment.payload.region.height > 0;
 
-  await send("dashboard.reply.v1", { text: "Smoothed with a 5m window" }, { reply_to: comment.id });
+  await send("canvas.reply.v1", { text: "Smoothed with a 5m window" }, { reply_to: comment.id });
   await until("reply shown", () => evaluate(`document.querySelector("#comments .reply")?.textContent === "Smoothed with a 5m window"`));
 
   await cdp("Page.reload");
@@ -89,14 +89,14 @@ try {
   await mouse("mouseReleased", target.x, target.y);
   await until("composer", () => evaluate(`document.querySelector("#composer").classList.contains("open")`));
   checks.draftShown = await evaluate(`document.querySelector("#draft-region")?.classList.contains("draft")`);
-  await send("dashboard.patch.v1", { panels: [{ id: "qps", kind: "stat", title: "QPS", value: 1600, unit: "req/s" }] });
+  await send("canvas.patch.v1", { panels: [{ id: "qps", kind: "stat", title: "QPS", value: 1600, unit: "req/s" }] });
   await until("live update while composing", () => evaluate(`document.querySelector('[data-panel="qps"] .value').textContent === "1,600 req/s"`));
   checks.draftSurvivesLiveUpdate = await evaluate(`Boolean(document.querySelector("#draft-region.draft"))`);
   await cdp("Input.insertText", { text: "Label the series" });
   await click("#composer-send");
 
   const picked = await until("element comment in agent mailbox", async () =>
-    (await agent("GET", `/v1/endpoints/${AGENT_ID}/history`)).messages.filter((m) => m.type === "dashboard.comment.v1")[1],
+    (await agent("GET", `/v1/endpoints/${AGENT_ID}/history`)).messages.filter((m) => m.type === "canvas.comment.v1")[1],
   );
   const element = picked.payload.element || {};
   checks.elementPanel = element.panel === "lat" && element.selector?.startsWith('[data-panel="lat"]');
@@ -111,13 +111,13 @@ try {
   })()`;
   checks.markerOnElement = await evaluate(markerOnElement);
   const before = await rect(`[data-comment="${picked.id}"]`);
-  await send("dashboard.patch.v1", { remove: ["qps"] }); // the latency panel shifts into the first slot
+  await send("canvas.patch.v1", { remove: ["qps"] }); // the latency panel shifts into the first slot
   await until("marker follows its element", async () =>
     (await evaluate(markerOnElement)) && Math.abs((await rect(`[data-comment="${picked.id}"]`)).left - before.left) > 50,
   );
   checks.markerFollowsElement = true;
 
-  await send("dashboard.clear.v1", { comments: [picked.id] });
+  await send("canvas.clear.v1", { comments: [picked.id] });
   await until("agent cleared the comment", () =>
     evaluate(`!document.querySelector('[data-comment="${picked.id}"]') && document.querySelectorAll(".region.placed").length === 1 &&
       document.querySelector("#comments").textContent.includes("cleared by agent")`),

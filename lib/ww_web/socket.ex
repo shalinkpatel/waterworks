@@ -3,7 +3,7 @@ defmodule WwWeb.Socket do
   # State is %{id: endpoint id}: the router authenticated the upgrade, so no token is kept.
   @behaviour WebSock
 
-  # Idle connections are closed by the server after 60 s; pings keep quiet dashboards attached.
+  # Idle connections are closed by the server after 60 s; pings keep quiet canvases attached.
   @keepalive 30_000
 
   @impl true

@@ -53,22 +53,22 @@ defmodule WwPiAdapterTest do
     # Not marked immediate, so it queues in the agent's inbox instead of prompting the model.
     {socket, _} = TestWS.receive_json(socket)
 
-    # Comments are accepted only from dashboards this Pi session opened or published to; any
-    # other endpoint's dashboard.comment.v1 is refused without reaching the model.
+    # Comments are accepted only from canvases this Pi session opened or published to; any
+    # other endpoint's canvas.comment.v1 is refused without reaching the model.
     socket =
       TestWS.send_json(socket, %{
         op: "send",
-        id: "msg_pi_dashboard_comment",
+        id: "msg_pi_canvas_comment",
         to: agent["id"],
-        type: "dashboard.comment.v1",
+        type: "canvas.comment.v1",
         payload: %{text: "too noisy", region: %{x: 0, y: 0, width: 0.5, height: 0.5}, panels: []}
       })
 
     {socket, _} = TestWS.receive_json(socket, 5_000)
     {socket, commented} = TestWS.receive_json(socket, 5_000)
-    assert commented["message"]["reply_to"] == "msg_pi_dashboard_comment"
+    assert commented["message"]["reply_to"] == "msg_pi_canvas_comment"
     assert commented["message"]["type"] == "core.error.v1"
-    assert commented["message"]["payload"]["error"] == "unknown_dashboard"
+    assert commented["message"]["payload"]["error"] == "unknown_canvas"
     socket = TestWS.send_json(socket, %{op: "ack", id: commented["message"]["id"]})
     {_socket, _} = TestWS.receive_json(socket)
     TestWS.close(socket)
@@ -95,7 +95,7 @@ defmodule WwPiAdapterTest do
     _ = TestWS.send_json(reconnected, %{op: "ack", id: pending["message"]["id"]})
   end
 
-  test "dashboard tools: open keeps its token out of the model result, publish sends a file" do
+  test "canvas tools: open keeps its token out of the model result, publish sends a file" do
     {output, 0} =
       System.cmd("node", ["test/support/pi_tool_check.mjs"],
         env: [
@@ -114,21 +114,21 @@ defmodule WwPiAdapterTest do
       "expected" => expected
     } = output |> String.split("\n", trim: true) |> List.last() |> Jason.decode!()
 
-    [_, fragment] = String.split(notice, "/dashboard#")
+    [_, fragment] = String.split(notice, "/canvas#")
     %{"endpoint" => ^id, "token" => token} = URI.decode_query(fragment)
     refute content =~ token
     assert %Ww.Endpoint{accepts: accepts} = Ww.Store.get_endpoint(id)
-    assert "dashboard.render.v1" in accepts
+    assert "canvas.render.v1" in accepts
 
     assert [first, full, delta] = Ww.Store.history(id)
-    assert %Ww.Message{id: ^published_id, type: "dashboard.render.v1"} = first
+    assert %Ww.Message{id: ^published_id, type: "canvas.render.v1"} = first
     assert first.payload == %{"html" => "<h1>from pi</h1>", "title" => "Pi page"}
 
     # A delta to an unrelated page is not smaller, so that publish is full.
-    assert republished == ["dashboard.render.v1", "dashboard.delta.v1"]
+    assert republished == ["canvas.render.v1", "canvas.delta.v1"]
 
     # The delta names its base and rebuilds the edited page with the browser's applier.
-    assert %Ww.Message{type: "dashboard.delta.v1", payload: %{"base" => base, "ops" => ops}} =
+    assert %Ww.Message{type: "canvas.delta.v1", payload: %{"base" => base, "ops" => ops}} =
              delta
 
     assert base == full.id

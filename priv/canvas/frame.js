@@ -3,7 +3,7 @@
 function onRender(event) {
   if (event.source !== parent || event.data?.source !== "waterworks-host" || event.data.kind !== "render") return;
   removeEventListener("message", onRender);
-  const helper = new URL("/dashboard/helper.js", location.href);
+  const helper = new URL("/canvas/helper.js", location.href);
   document.open();
   document.write(event.data.html);
   document.write(`<script src="${helper}"><\/script>`);

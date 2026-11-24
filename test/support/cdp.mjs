@@ -1,4 +1,4 @@
-// Minimal headless-Chrome driver over the DevTools protocol, shared by the dashboard tests.
+// Minimal headless-Chrome driver over the DevTools protocol, shared by the canvas tests.
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

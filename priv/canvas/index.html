@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Waterworks dashboard</title>
+    <title>Waterworks canvas</title>
     <style>
       :root { color-scheme: light dark; --line: #8884; --accent: #2f7de1; font: 15px system-ui, sans-serif; }
       * { box-sizing: border-box; }
@@ -59,7 +59,7 @@
   </head>
   <body>
     <header>
-      <h1 id="title">Waterworks dashboard</h1>
+      <h1 id="title">Waterworks canvas</h1>
       <span id="version"></span>
       <span id="status" role="status">offline</span>
       <button id="comment" aria-pressed="false" disabled title="Drag a rectangle, or select text first">Comment area</button>
@@ -68,14 +68,14 @@
     <div class="layout">
       <main>
         <div id="setup" hidden>
-          <p>Open this page with a dashboard endpoint, for example:</p>
-          <pre>ww dashboard --title "My dashboard"</pre>
+          <p>Open this page with a canvas endpoint, for example:</p>
+          <pre>ww canvas --title "My canvas"</pre>
           <p>The printed URL carries the endpoint's credentials in the fragment, which never reaches the server.</p>
         </div>
         <div id="board">
           <div id="panels"></div>
           <div id="markers"></div>
-          <div id="overlay" aria-label="Drag to select an area, or press Enter for the whole dashboard" tabindex="-1"></div>
+          <div id="overlay" aria-label="Drag to select an area, or press Enter for the whole canvas" tabindex="-1"></div>
         </div>
       </main>
       <aside>
@@ -93,6 +93,6 @@
         <button id="composer-send" class="primary">Send</button>
       </div>
     </div>
-    <script type="module" src="/dashboard/app.js"></script>
+    <script type="module" src="/canvas/app.js"></script>
   </body>
 </html>

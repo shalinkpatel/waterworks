@@ -135,7 +135,7 @@ and say what you see: the agent replies in the sidebar and pins a note below.</p
     list.prepend(item);
   }
 
-  // Streamed by the agent with dashboard.data.v1 and replayed after a reload.
+  // Streamed by the agent with canvas.data.v1 and replayed after a reload.
   addEventListener("waterworks", (event) => {
     const d = event.detail;
     if (d.kind === "tick") tick(d);

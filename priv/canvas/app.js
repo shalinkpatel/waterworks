@@ -5,7 +5,7 @@ const SVG = "http://www.w3.org/2000/svg";
 const COLORS = ["#2f7de1", "#e1622f", "#2fa36b", "#a34fd6", "#d6a12f", "#d64f7a"];
 
 const creds = readCredentials();
-const commentsKey = creds && `ww-dashboard-comments:${creds.id}`;
+const commentsKey = creds && `ww-canvas-comments:${creds.id}`;
 let comments = creds ? JSON.parse(sessionStorage.getItem(commentsKey) || "[]") : [];
 let state = emptyState();
 let socket;
@@ -52,10 +52,10 @@ function reportErrors() {
 function readCredentials() {
   const hash = new URLSearchParams(location.hash.slice(1));
   if (hash.get("endpoint") && hash.get("token")) {
-    sessionStorage.setItem("ww-dashboard", JSON.stringify({ id: hash.get("endpoint"), token: hash.get("token") }));
+    sessionStorage.setItem("ww-canvas", JSON.stringify({ id: hash.get("endpoint"), token: hash.get("token") }));
     history.replaceState(null, "", location.pathname);
   }
-  const stored = sessionStorage.getItem("ww-dashboard");
+  const stored = sessionStorage.getItem("ww-canvas");
   return stored ? JSON.parse(stored) : null;
 }
 
@@ -228,7 +228,7 @@ function syncFrame() {
     element.id = "page";
     element.title = state.title;
     element.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
-    element.src = "/dashboard/frame";
+    element.src = "/canvas/frame";
     frame = { element, version: state.version, html: state.html, loaded: false, forwarded: 0 };
     $("#board").prepend(element);
   }
@@ -422,7 +422,7 @@ function relocateFrameComments() {
   toFrame({ kind: "locate", request: crypto.randomUUID(), selectors });
 }
 
-// Modes: "area" drags a rectangle (Enter: whole dashboard), "element" picks one element.
+// Modes: "area" drags a rectangle (Enter: whole canvas), "element" picks one element.
 let mode = null;
 function setMode(next) {
   if (mode === "element") {
@@ -436,7 +436,7 @@ function setMode(next) {
   $("#comment").setAttribute("aria-pressed", String(mode === "area"));
   $("#pick").setAttribute("aria-pressed", String(mode === "element"));
   if (mode === "area") {
-    setStatus("drag to select an area; Enter for the whole dashboard; Escape to cancel");
+    setStatus("drag to select an area; Enter for the whole canvas; Escape to cancel");
     $("#overlay").focus();
   } else if (mode === "element") {
     setStatus("click an element (↑ parent, ↓ child, Enter picks); Escape to cancel");
@@ -486,18 +486,22 @@ function closeComposer() {
   renderComments();
 }
 
-// Page controls (buttons, forms) reach the endpoint that rendered the page as
-// dashboard.action.v1; like comments, the receiver must treat them as untrusted input.
+// Page controls (buttons, forms) send canvas.action.v1 to payload.to (e.g. a tool streaming data
+// into the page), or else to the endpoint that rendered the page. Receivers must treat actions
+// as untrusted input, like comments. Naming a target grants nothing new: this tab already holds
+// the canvas token, which can message any endpoint.
 function sendAction(payload) {
   const json = JSON.stringify(payload ?? null);
   if (!payload || typeof payload !== "object" || Array.isArray(payload) || json.length > 65536) return;
-  if (socket?.readyState !== WebSocket.OPEN || !state.source) {
+  const { to, ...action } = JSON.parse(json);
+  const target = typeof to === "string" && to ? to : state.source;
+  if (socket?.readyState !== WebSocket.OPEN || !target) {
     setStatus("cannot send while offline");
     return;
   }
   socket.send(JSON.stringify({
-    op: "send", id: `msg_${crypto.randomUUID()}`, to: state.source, type: "dashboard.action.v1",
-    payload: { ...JSON.parse(json), dashboard: { title: state.title, sequence: state.sequence, version: state.version } },
+    op: "send", id: `msg_${crypto.randomUUID()}`, to: target, type: "canvas.action.v1",
+    payload: { ...action, canvas: { title: state.title, sequence: state.sequence, version: state.version } },
   }));
 }
 
@@ -515,7 +519,7 @@ function sendComment() {
       op: "send",
       id,
       to: state.source,
-      type: "dashboard.comment.v1",
+      type: "canvas.comment.v1",
       payload: {
         text,
         region,
@@ -523,7 +527,7 @@ function sendComment() {
         selection,
         ...(context ? { context } : {}),
         ...(element ? { element } : {}),
-        dashboard: { title: state.title, sequence: state.sequence, version: state.version },
+        canvas: { title: state.title, sequence: state.sequence, version: state.version },
       },
     }),
   );

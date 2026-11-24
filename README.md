@@ -10,7 +10,7 @@ See [DESIGN.md](DESIGN.md) for the protocol and delivery model.
 Waterworks is inspired by David Crespo's [ah](https://github.com/david-crespo/ah)
 ("agent host"), which showed how small web tools can talk back to a running
 coding agent. Waterworks generalizes that idea into a mailbox for any agent or
-tool. Live, commentable dashboards are included as one example tool built on it.
+tool. Live, commentable canvases are included as one example tool built on it.
 
 ## Build
 
@@ -53,8 +53,8 @@ only in this response and authorizes actions as that endpoint.
 ```sh
 ./ww register --kind agent --name pi-main
 ./ww register \
-  --kind tool --name dashboard \
-  --accepts dashboard.render.v1 \
+  --kind tool --name canvas \
+  --accepts canvas.render.v1 \
   --emits ui.button_clicked.v1 \
   --metadata workspace="$PWD"
 ```
@@ -69,9 +69,9 @@ export WW_TOKEN='<endpoint-token>'
 Examples:
 
 ```sh
-./ww discover --kind tool --accepts dashboard.render.v1 --online
+./ww discover --kind tool --accepts canvas.render.v1 --online
 ./ww inspect "$WW_ENDPOINT"
-./ww send --to "$WW_ENDPOINT" --type dashboard.render.v1 \
+./ww send --to "$WW_ENDPOINT" --type canvas.render.v1 \
   --data '{"title":"Deployment","status":"started"}'
 ./ww tail                 # newline-delimited JSON; explicit acknowledgement
 ./ww tail --ack           # acknowledge each message after writing it
@@ -130,16 +130,16 @@ The endpoint is named after the session (`/name`), falling back to `pi-<pid>`,
 and is renamed whenever the session name changes.
 The extension reconnects automatically, keeps credentials in memory, injects
 supported messages with `pi.sendMessage(..., deliverAs: "steer")`, and registers
-`ww_send`, `ww_inbox`, `ww_discover`, `ww_dashboard_open`, and `ww_dashboard_publish`
+`ww_send`, `ww_inbox`, `ww_discover`, `ww_canvas_open`, and `ww_canvas_publish`
 (publish an HTML file from disk) tools for the model.
-`ww_dashboard_open` creates a dashboard, shows its URL to you, and opens it on
+`ww_canvas_open` creates a canvas, shows its URL to you, and opens it on
 macOS (set `WW_OPEN_BROWSER=0` to disable); the model receives only the
-endpoint ID, never the dashboard token. Mailbox acknowledgement means Pi
+endpoint ID, never the canvas token. Mailbox acknowledgement means Pi
 accepted the message into its session; completion is a separate response.
 
-The reference adapter accepts `demo.echo.v1`, `dashboard.comment.v1`, and
-`core.error.v1`. Comments are accepted only from dashboards the session opened
-or published to (others get `core.error.v1 {error: "unknown_dashboard"}`), and
+The reference adapter accepts `demo.echo.v1`, `canvas.comment.v1`, and
+`core.error.v1`. Comments are accepted only from canvases the session opened
+or published to (others get `core.error.v1 {error: "unknown_canvas"}`), and
 the model is told that page-derived fields (`context`, `element`, `selection`)
 are untrusted data, not instructions. Other types queue in an inbox the
 model reads with `ww_inbox` (the footer shows the count), unless the sender sets
@@ -245,17 +245,17 @@ Send a message over the socket with `op: "send"`:
 }
 ```
 
-## Example tool: live dashboards
+## Example tool: live canvases
 
-Dashboards are one tool built on the mailbox primitives above, not part of the core. Any tool can be built the same way: register an endpoint, accept and emit typed messages.
+Canvases are one tool built on the mailbox primitives above, not part of the core. Any tool can be built the same way: register an endpoint, accept and emit typed messages.
 
-A dashboard is a tool endpoint rendered at `/dashboard`. Create one and open the
+A canvas is a tool endpoint rendered at `/canvas`. Create one and open the
 printed URL; its credentials ride in the URL fragment, which the browser never
 sends to the server, and the page moves them into tab storage:
 
 ```sh
 export WW_ADMIN_TOKEN='<your-local-admin-token>'
-./ww dashboard --title "Fleet health"
+./ww canvas --title "Fleet health"
 ```
 
 ### Page mode (HTML reports)
@@ -264,14 +264,14 @@ Publish any self-contained HTML page: inline data, Vega-Lite or other CDN script
 your own JS. Each publish replaces the page live and bumps its version chip:
 
 ```sh
-./ww publish --to <dashboard-id> --file report.html --watch   # republish on every save
+./ww publish --to <canvas-id> --file report.html --watch   # republish on every save
 ```
 
 Pages run in a sandboxed frame with an opaque origin (`sandbox allow-scripts
 allow-popups allow-popups-to-escape-sandbox`): scripts and CDNs work, links may
 open ordinary (unsandboxed) tabs, but the page
-cannot reach the dashboard's token, storage, or the authenticated API. Stream data
-into a running page without a reload by sending `dashboard.data.v1 {any}`:
+cannot reach the canvas's token, storage, or the authenticated API. Stream data
+into a running page without a reload by sending `canvas.data.v1 {any}`:
 
 ```js
 addEventListener("waterworks", (event) => update(event.detail));
@@ -281,15 +281,15 @@ Data sent since the last publish is replayed after a reload. Pages may be up to
 16 MB.
 
 Republishing sends a delta when that is less than half the page:
-`dashboard.delta.v1 {base, ops, title?}`, where `base` is the message ID of the
+`canvas.delta.v1 {base, ops, title?}`, where `base` is the message ID of the
 version it edits and `ops` are line edits that consume the whole base:
 `{keep: n}`, `{drop: n}`, `{insert: [lines]}`. `ww publish --watch` diffs with
-Myers (one edit to a 3 MB page sent 174 bytes); Pi's `ww_dashboard_publish` sends
+Myers (one edit to a 3 MB page sent 174 bytes); Pi's `ww_canvas_publish` sends
 the changed span. A delta whose base is not the current page is refused: the page
 keeps its version, shows "missed an update", and replies `core.error.v1
 {error: "delta_base_mismatch"}` to the sender, after which Pi publishes the full
 page. Deltas are line-based, so keep large embedded data on many lines, or stream
-it with `dashboard.data.v1`. Comments on a page carry `context`: the section heading, the visible
+it with `canvas.data.v1`. Comments on a page carry `context`: the section heading, the visible
 text, and the element ids under the region (or your text selection inside the
 page).
 
@@ -299,10 +299,10 @@ Without writing HTML, any endpoint can stream structured panels:
 
 | Type | Payload |
 | --- | --- |
-| `dashboard.render.v1` | `{title, panels}` replaces the page (`{title?, html}` for page mode) |
-| `dashboard.delta.v1` | page mode: `{base, ops, title?}` edits the current page's lines |
-| `dashboard.patch.v1` | `{title?, panels?, remove?, append?}`: upsert panels by `id`, remove ids, append `[x, y]` points to line series |
-| `dashboard.reply.v1` | `{text}` with `reply_to` set to a comment's ID |
+| `canvas.render.v1` | `{title, panels}` replaces the page (`{title?, html}` for page mode) |
+| `canvas.delta.v1` | page mode: `{base, ops, title?}` edits the current page's lines |
+| `canvas.patch.v1` | `{title?, panels?, remove?, append?}`: upsert panels by `id`, remove ids, append `[x, y]` points to line series |
+| `canvas.reply.v1` | `{text}` with `reply_to` set to a comment's ID |
 
 Panels are `{id, kind, title, width?}` where `width` spans 1–4 columns and
 `kind` is one of `stat {value, unit?, delta?}`, `line {series: [{name, points}]}`,
@@ -310,44 +310,63 @@ Panels are `{id, kind, title, width?}` where `width` spans 1–4 columns and
 series keep at most 500 points. Agent content is rendered as text, never HTML.
 
 To give feedback, use **Comment area** to drag a rectangle (or select text
-first, or press Enter for the whole dashboard), or **Select element** to click
+first, or press Enter for the whole canvas), or **Select element** to click
 one: hover outlines it, ↑/↓ widen to its parent or narrow back, and a click or
 Enter picks what is outlined. On published pages the picker runs inside the
 sandboxed frame. The selection stays highlighted while you write; once sent it
 remains as a hatched, numbered marker, and element markers follow their element
 across republishes, deltas, and relayouts. The page sends
-`dashboard.comment.v1` to the endpoint that last rendered it:
+`canvas.comment.v1` to the endpoint that last rendered it:
 
 ```json
 {"text": "...", "region": {"x": 0.1, "y": 0, "width": 0.3, "height": 0.2},
  "panels": [{"id": "qps", "title": "QPS", "kind": "stat"}],
- "selection": "", "dashboard": {"title": "...", "sequence": 7}}
+ "selection": "", "canvas": {"title": "...", "sequence": 7}}
 ```
 
-`region` is a fraction of the dashboard; page-mode comments add
-`context: {heading, text, ids, selection}` and `dashboard.version`, and picked
+`region` is a fraction of the canvas; page-mode comments add
+`context: {heading, text, ids, selection}` and `canvas.version`, and picked
 elements add `element: {selector, tag, id, classes, text}` (plus `panel` in panel
 mode). Replies appear under the comment. The agent removes markers once it has
-addressed them with `dashboard.clear.v1 {comments: [ids]}` or `{all: true}`
+addressed them with `canvas.clear.v1 {comments: [ids]}` or `{all: true}`
 (comments made before the clear); the comment stays in the sidebar as "cleared
 by agent". A reload rebuilds the page, clears included, from the endpoint's
 mailbox history.
 
 Page controls can call `waterworks.action({...})` (any JSON object up to 64 KB);
-the host sends it as `dashboard.action.v1` to the endpoint that last rendered
-the page. Like comment fields, treat action payloads as untrusted input.
+the host sends it as `canvas.action.v1` to `to` when given (e.g. a tool streaming
+into the page), otherwise to the endpoint that last rendered the page. Like comment fields, treat action payloads as untrusted input.
 
-### Fleet dashboard
+## Example tool: fleet
 
-`ww fleet` registers a dashboard showing every registered agent and tool, with
-counts, sorting, kind/type/status filters, and search. It needs `WW_ADMIN_TOKEN`,
-prints and opens the dashboard URL (`--no-open` to skip), publishes the page
-once, and sends `dashboard.data.v1` only when the fleet changes (polled every
-`--interval` seconds, default 5). Its Type column reads `metadata.harness` for agents (the Pi adapter
-sets `pi`) and `metadata.tool` for tools (dashboards set `dashboard`); register
-your own with `--metadata harness=...` or `--metadata tool=...`. Offline rows
-have a Remove button (click twice to confirm); `ww fleet` deletes only endpoints
-that exist and are offline, along with their messages.
+`ww fleet` is a tool endpoint (`metadata.tool: "fleet"`) that tracks every
+registered agent and tool and streams the list to subscribers whenever it
+changes (polled every `--interval` seconds, default 2). It needs
+`WW_ADMIN_TOKEN` and owns no canvas.
+
+- **Standalone view:** it registers a viewer endpoint and opens
+  `/fleet#endpoint=…&token=…&fleet=…` (`--no-open` to skip): counts, sorting,
+  kind/type/status filters, search, and a light/dark toggle.
+- **On a canvas:** to comment on the fleet with an agent, publish the same view
+  into a canvas the agent owns and subscribe that canvas. Data streamed into a
+  canvas does not change who owns it, so comments still go to the agent:
+
+  ```sh
+  ./ww fleet page > fleet.html        # the view as one self-contained page
+  # agent: ww_canvas_publish fleet.html to its canvas, then
+  # ww_send to the fleet: fleet.subscribe.v1 {"to": "<canvas id>"}
+  ```
+
+Messages: `fleet.subscribe.v1 {to?}` (yourself, or a canvas), `fleet.unsubscribe.v1
+{to?}`, and `fleet.remove.v1 {id}` (or `canvas.action.v1 {action: "remove", id}`
+from a subscribed canvas). Subscribers receive `fleet.state.v1` (canvases:
+`canvas.data.v1`) with `{fleet, endpoints: [{name, kind, type, status, id, cwd}],
+updated}`. Offline rows have a Remove button (click twice to confirm); the fleet
+removes only endpoints that exist and are offline, and only for subscribers.
+
+The Type column reads `metadata.harness` for agents (the Pi adapter sets `pi`)
+and `metadata.tool` for tools (canvases set `canvas`); register your own with
+`--metadata harness=...` or `--metadata tool=...`.
 
 ## Tests
 
@@ -362,7 +381,7 @@ WW_TEST_HTTP=1 mix test --include transport
 ```
 
 Run everything, including the real two-node test and the headless-Chrome
-dashboard test (requires Google Chrome; the explicit test cookie means no
+canvas test (requires Google Chrome; the explicit test cookie means no
 `~/.erlang.cookie` is created):
 
 ```sh
@@ -388,13 +407,13 @@ When a sandbox forbids Mix's local compile-lock socket, prefix commands with
 - `disc_copies` retains all history in RAM and on disk; retention and large
   payload storage are not implemented.
 - Tokens cannot be rotated yet; a leaked endpoint token stays valid until the
-  endpoint is deregistered. Every Pi session and dashboard adds an endpoint; remove
-  dead ones with `ww deregister` or the fleet dashboard.
+  endpoint is deregistered. Every Pi session and canvas adds an endpoint; remove
+  dead ones with `ww deregister` or the fleet canvas.
 - Mailbox ownership uses `:global`, which assumes a connected full-mesh cluster;
   OTP may log and resolve a name conflict during concurrent takeover.
-- Dashboard comments made before a reload persist only in that browser tab.
-  Reloads replay the dashboard's whole history; deltas keep that small, but
+- Canvas comments made before a reload persist only in that browser tab.
+  Reloads replay the canvas's whole history; deltas keep that small, but
   every full publish of a large page stays in it. A page's scripts can stream data to itself but
-  cannot send messages to the agent. The Pi adapter forgets which dashboards it
+  cannot send messages to the agent. The Pi adapter forgets which canvases it
   opened when its session restarts, after which their comments are refused.
   Other harnesses are not implemented.
