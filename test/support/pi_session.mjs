@@ -31,7 +31,7 @@ function responseFor(context) {
   return fauxAssistantMessage(
     fauxToolCall("ww_send", {
       to: browserId,
-      type: "demo.echoed.v1",
+      type: "test.pong.v1",
       payload: { text: "hello from pi" },
       reply_to: id,
     }),

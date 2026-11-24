@@ -1,30 +1,10 @@
 defmodule Ww.Fleet do
   @moduledoc """
   `ww fleet`: a tool endpoint that tracks every registered agent and tool and streams the
-  list to subscribers. It owns no page. Its standalone view is `/fleet` (served by the
-  daemon, opened with a viewer endpoint `ww fleet` registers); to comment on it with an
-  agent, publish `ww fleet page` into a canvas and subscribe that canvas.
-
-  Messages it accepts:
-    * `fleet.subscribe.v1 {to?}`: stream state to the sender, or to the canvas `to`.
-      Canvases receive `canvas.data.v1`; anything else receives `fleet.state.v1`.
-    * `fleet.unsubscribe.v1 {to?}`
-    * `fleet.remove.v1 {id}` (offline endpoints) and `fleet.disconnect.v1 {id}` (online
-      ones) from a subscriber: deregisters the endpoint; a connected one is disconnected.
-    * `fleet.shutdown.v1 {id}` from a subscriber: sends `core.shutdown.v1` to an online
-      endpoint, asking it to stop (each endpoint decides what that means).
-    * `fleet.remove_offline.v1 {}` from a subscriber: removes every offline endpoint except
-      current subscribers.
-    * `fleet.broadcast.v1 {ids, text, broadcast?}` from the fleet's own view, or
-      `canvas.action.v1 {action: "broadcast", ...}` from a subscribed canvas: sends `agent.prompt.v1
-      {text, delivery: "immediate"}` to each listed agent that is online, then reports
-      `fleet.broadcast_status.v1 {broadcast, text, sessions: [{id, name, status}]}` to the
-      view as sessions acknowledge (status: pending, acked, failed).
-    * Canvases send the same as `canvas.action.v1 {action: "remove" | "disconnect" |
-      "shutdown", id}`.
-    * `core.shutdown.v1`: the fleet deregisters itself and its viewer and exits.
-
-  State: `{fleet, endpoints: [{name, kind, type, status, id, cwd}], updated}` (updated: UTC ISO 8601).
+  list to subscribers; it can remove, disconnect and shut down endpoints and broadcast
+  prompts to agents. It owns no page: its standalone view is `/fleet` (a viewer endpoint it
+  registers), and `ww fleet page` is the same view for a canvas. The message protocol is
+  in the README ("Example tool: fleet"); `command/5` decides who may do what.
   """
 
   alias Ww.{CLI, Tool}
@@ -257,8 +237,6 @@ defmodule Ww.Fleet do
     put_in(state.broadcasts[tracked.id], tracked)
   end
 
-  # Called every poll: re-reads pending sends and reports changes. Gives up after 10 minutes
-  # (a session that never acknowledges stays "pending" in the view).
   # Broadcasts are kept in memory (the last 50) for the view's Broadcasts tab; they are gone
   # when the fleet restarts. Pending receipts are re-checked for 10 minutes.
   defp refresh_broadcasts(state) do
@@ -388,8 +366,6 @@ defmodule Ww.Fleet do
     target = payload["to"] || from
 
     case type do
-      # Prompts agents, so only the fleet's own first-party view may ask: canvases forward
-      # actions from agent-authored pages, which can load third-party scripts.
       # From the fleet's own view, or as a canvas action from a subscribed canvas. Canvases
       # relay actions from agent-authored pages; accepted because the fleet is single-user.
       type
@@ -481,7 +457,6 @@ defmodule Ww.Fleet do
         type: type(e),
         status: if(e["online"], do: "online", else: "offline"),
         id: e["id"],
-        cwd: get_in(e, ["metadata", "cwd"]) || "",
         # Subscribers (e.g. this fleet's viewer) are never cleared by "Remove all offline".
         kept: Map.has_key?(subscribers, e["id"])
       }
@@ -490,26 +465,6 @@ defmodule Ww.Fleet do
   end
 
   # Agents name their harness in metadata.harness, tools their tool in metadata.tool.
-  # Endpoints registered before that convention are inferred from their accepts or name.
-  defp type(%{"kind" => "agent"} = e) do
-    cond do
-      meta(e, "harness") -> meta(e, "harness")
-      "demo.echo.v1" in (e["accepts"] || []) -> "pi"
-      String.starts_with?(e["name"] || "", "pi-") -> "pi"
-      true -> "unknown"
-    end
-  end
-
-  defp type(e) do
-    accepts = e["accepts"] || []
-
-    cond do
-      meta(e, "tool") -> meta(e, "tool")
-      "canvas.render.v1" in accepts -> "canvas"
-      "dashboard.render.v1" in accepts -> "dashboard (legacy)"
-      true -> "unknown"
-    end
-  end
-
-  defp meta(e, key), do: get_in(e, ["metadata", key])
+  defp type(%{"kind" => "agent"} = e), do: get_in(e, ["metadata", "harness"]) || "unknown"
+  defp type(e), do: get_in(e, ["metadata", "tool"]) || "unknown"
 end

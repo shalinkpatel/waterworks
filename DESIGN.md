@@ -1,10 +1,11 @@
-# Waterworks v0.1
+# Waterworks
 
 Waterworks (`ww`) connects agent and tool instances with crash-durable, typed mailboxes.
-The first implementation is a trusted-network Elixir/OTP daemon and CLI with
-HTTP, streaming HTTP, and WebSocket transports. It includes a fixed browser/CLI
-echo demo and a reference Pi adapter, but does not host arbitrary web tools or
-implement other harness adapters.
+It is a trusted-network Elixir/OTP daemon and CLI (shipped as a Mix release) with
+HTTP, streaming HTTP, and WebSocket transports, a reference Pi adapter, and
+example tools built on the mailbox: canvases (agent-rendered pages users comment
+on), `ww fleet` (the registered endpoints) and `ww log` (a reviewed work log).
+Other harness adapters are not implemented.
 
 ## Scope and non-goals
 
@@ -72,7 +73,9 @@ The core validates only the envelope. Endpoint adapters validate their payload
 contracts. Unknown fields and payload types are not interpreted by the router.
 
 Control operations are `register`, `discover`, `send`, `subscribe`, `ack`,
-`inspect`, and `history`. The CLI uses the public HTTP API; streaming HTTP tails
+`inspect`, `history`, message status (sender or recipient), rename (self) and
+deregister (self, or admin; deletes the mailbox and closes the endpoint's
+sockets with reason `deregistered`). The CLI uses the public HTTP API; streaming HTTP tails
 provide newline-delimited JSON and heartbeat frames. WebSockets accept `send`,
 `ack`, and `ping` operations and deliver messages as JSON. Browser sockets pass
 their scoped token in the subprotocol handshake rather than the URL. Native
@@ -112,15 +115,16 @@ memory, never added to the transcript. The socket reconnects with the same
 endpoint identity. Supported messages are injected with `pi.sendMessage()` using
 `steer` delivery and acknowledged after Pi accepts them into the session;
 acknowledgement does not mean the model finished working. Only canvas
-comments, errors, echoes, and messages with `payload.delivery: "immediate"` do
-this; every other message stays unacknowledged in an in-session inbox (so a
+comments, errors, the log's change requests, and messages with
+`payload.delivery: "immediate"` do this; every other message stays unacknowledged in an in-session inbox (so a
 restart redelivers it) until the model calls `ww_inbox`, which returns and
 acknowledges them. The footer shows the queued count. Canvas comments are
 accepted only from canvases the session opened or published to (others get
 `core.error.v1 {error: "unknown_canvas"}`), and page-derived comment fields are
 presented to the model as untrusted data. The model sends structured
 replies through the extension's `ww_send` tool and discovers peers through
-`ww_discover`.
+`ww_discover`. `core.shutdown.v1` never stops Pi: the session deregisters
+itself and leaves the fleet.
 
 ## OTP and distribution
 

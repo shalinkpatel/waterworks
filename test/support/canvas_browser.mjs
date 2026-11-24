@@ -1,10 +1,10 @@
 // Panel mode in real headless Chrome: history render, live patches, a region comment, a reply, reload.
 import { api, launch, until } from "./cdp.mjs";
 
-const { WW_URL: base, AGENT_ID, AGENT_TOKEN, DASH_ID, DASH_TOKEN, CHROME } = process.env;
-const dash = { id: DASH_ID, token: DASH_TOKEN };
+const { WW_URL: base, AGENT_ID, AGENT_TOKEN, CANVAS_ID, CANVAS_TOKEN, CHROME } = process.env;
+const canvas = { id: CANVAS_ID, token: CANVAS_TOKEN };
 const agent = api(base, { id: AGENT_ID, token: AGENT_TOKEN });
-const send = (type, payload, extra = {}) => agent("POST", "/v1/messages", { to: dash.id, type, payload, ...extra });
+const send = (type, payload, extra = {}) => agent("POST", "/v1/messages", { to: canvas.id, type, payload, ...extra });
 
 // Sent before the page exists, so the page must rebuild it from history.
 await send("canvas.render.v1", {
@@ -19,7 +19,7 @@ await send("canvas.render.v1", {
 const browser = await launch(CHROME);
 try {
   const { cdp, evaluate, rect, mouse, click, key, drag } = browser;
-  await cdp("Page.navigate", { url: `${base}/canvas#${new URLSearchParams({ endpoint: dash.id, token: dash.token })}` });
+  await cdp("Page.navigate", { url: `${base}/canvas#${new URLSearchParams({ endpoint: canvas.id, token: canvas.token })}` });
 
   await until("history render", () => evaluate(`document.querySelector('[data-panel="qps"] .value')?.textContent === "1,200 req/s"`));
   await until("live socket", () => evaluate(`document.querySelector("#status").textContent === "live"`));
@@ -56,7 +56,7 @@ try {
   const comment = await until("comment in agent mailbox", async () =>
     (await agent("GET", `/v1/endpoints/${AGENT_ID}/history`)).messages.find((m) => m.type === "canvas.comment.v1"),
   );
-  checks.commentFromCanvas = comment.from === dash.id;
+  checks.commentFromCanvas = comment.from === canvas.id;
   checks.commentText = comment.payload.text === "This spike looks wrong";
   checks.commentPanels = JSON.stringify(comment.payload.panels.map((p) => p.id)) === '["qps"]';
   checks.commentRegion = comment.payload.region.width > 0 && comment.payload.region.height > 0;

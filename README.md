@@ -85,26 +85,10 @@ Examples:
 ./ww history
 ```
 
-`tail` emits `ready`, `message`, and `heartbeat` objects. Tools should ignore
+`tail` emits `ready`, `message`, and `heartbeat` objects, and a final
+`deregistered` if the endpoint is removed. Tools should ignore
 control objects they do not understand. `WW_URL` selects the daemon and defaults
 to `http://127.0.0.1:7420`.
-
-## Browser and CLI demo
-
-Register one endpoint for the browser and another for the CLI adapter. Start the
-CLI adapter with the CLI endpoint's credentials:
-
-```sh
-export WW_ENDPOINT='<cli-endpoint-id>'
-export WW_TOKEN='<cli-endpoint-token>'
-./ww echo
-```
-
-Open `http://127.0.0.1:7420/demo`, enter the browser endpoint's ID and token and
-the CLI endpoint's ID, then connect and send a message. The CLI returns
-`demo.echoed.v1`; the page applies it and acknowledges it without reloading.
-The browser token is kept only in page memory. This is a fixed demonstration
-page, not generic arbitrary-HTML hosting.
 
 ## Demo
 
@@ -136,15 +120,17 @@ The endpoint is named after the session (`/name`), falling back to `pi-<pid>`,
 and is renamed whenever the session name changes.
 The extension reconnects automatically, keeps credentials in memory, injects
 supported messages with `pi.sendMessage(..., deliverAs: "steer")`, and registers
-`ww_send`, `ww_inbox`, `ww_discover`, `ww_canvas_open`, and `ww_canvas_publish`
-(publish an HTML file from disk) tools for the model.
+`ww_send`, `ww_inbox`, `ww_discover`, `ww_canvas_open`, `ww_canvas_publish`
+(publish an HTML file from disk), and `ww_log` (see the log tool) for the model.
 `ww_canvas_open` creates a canvas, shows its URL to you, and opens it on
 macOS (set `WW_OPEN_BROWSER=0` to disable); the model receives only the
 endpoint ID, never the canvas token. Mailbox acknowledgement means Pi
 accepted the message into its session; completion is a separate response.
 
-The reference adapter accepts `demo.echo.v1`, `canvas.comment.v1`, and
-`core.error.v1`. Comments are accepted only from canvases the session opened
+The reference adapter prompts the session for `canvas.comment.v1`,
+`core.error.v1`, `log.changes_requested.v1`, and anything sent with
+`payload.delivery: "immediate"` (e.g. the fleet's `agent.prompt.v1`); it handles
+`core.shutdown.v1` itself by leaving the fleet. Comments are accepted only from canvases the session opened
 or published to (others get `core.error.v1 {error: "unknown_canvas"}`), and
 the model is told that page-derived fields (`context`, `element`, `selection`)
 are untrusted data, not instructions. Other types queue in an inbox the
@@ -370,16 +356,19 @@ Messages: `fleet.subscribe.v1 {to?}` (yourself, or a canvas), `fleet.unsubscribe
 `fleet.disconnect.v1 {id}` (online: deregisters it and closes its socket), and
 `fleet.shutdown.v1 {id}` (online: sends it `core.shutdown.v1`). A subscribed canvas
 sends the same as `canvas.action.v1 {action, id}`. Subscribers receive `fleet.state.v1` (canvases:
-`canvas.data.v1`) with `{fleet, endpoints: [{name, kind, type, status, id, cwd}],
-updated (UTC ISO 8601)}`. Offline rows have Remove; online rows have Shut down and Disconnect (click twice
+`canvas.data.v1`) with `{fleet, endpoints: [{name, kind, type, status, id, kept}],
+broadcasts, updated (UTC ISO 8601)}`; `kept` marks subscribers that "Remove all
+offline" leaves alone. Offline rows have Remove; online rows have Shut down and Disconnect (click twice
 to confirm). **Remove all offline** in the toolbar (`fleet.remove_offline.v1`) clears
 every offline endpoint except the fleet's current subscribers, such as its viewer. Shutting the fleet down from its own row (or sending it
 `core.shutdown.v1`) deregisters the fleet and its viewer and exits.
 
 **Broadcast** (standalone view, or the view published into a canvas): tick online agents, type a message, and Send
-(or Cmd/Ctrl+Enter). The fleet sends each `agent.prompt.v1 {text, delivery:
-"immediate"}`, so Pi sessions take it as a prompt now, and a modal shows which
-sessions have acknowledged it, live. The **Broadcasts** tab lists this fleet's recent
+(or Cmd/Ctrl+Enter). The view sends `fleet.broadcast.v1 {ids, text, broadcast}`;
+the fleet sends each online agent `agent.prompt.v1 {text, delivery: "immediate"}`,
+so Pi sessions take it as a prompt now, and reports `fleet.broadcast_status.v1
+{broadcast, text, sessions: [{id, name, status}]}` (pending, acked, failed) as they
+acknowledge, which fills a live receipts modal. The **Broadcasts** tab lists this fleet's recent
 broadcasts (the last 50, in memory until the fleet restarts) with their receipts;
 click one to reopen its receipts. Through a canvas this relies on
 trusting the canvas's pages (a canvas forwards actions from agent-authored HTML);
@@ -423,7 +412,7 @@ Any edit you make, approved entries included, puts the entry back in the queue.
 | `log.tags.v1 {}` | anyone | `log.tag_list.v1 {tags: [{name, count}]}` |
 | `log.query.v1 {status?, tags?, mine?, limit?}` | anyone | `log.entries.v1 {entries}` |
 | `log.table.v1 {entry, table, limit?, offset?, order_by?, desc?, format?}` | anyone | `log.table_rows.v1 {columns, rows, total, offset}`, or `{csv}` with `format: "csv"` |
-| `log.review.v1 {entry, action, note?}` | the log view | approve, reject, request_changes, reopen |
+| `log.review.v1 {entry, decision, note?}` | the log view | decision: approve, reject, request_changes, reopen |
 | `log.edit.v1 {entry, …changes}` | the log view | new revision, back to pending |
 
 The author receives `log.changes_requested.v1 {entry, note}` (as an immediate
@@ -480,12 +469,13 @@ When a sandbox forbids Mix's local compile-lock socket, prefix commands with
   payload storage are not implemented.
 - Tokens cannot be rotated yet; a leaked endpoint token stays valid until the
   endpoint is deregistered. Every Pi session and canvas adds an endpoint; remove
-  dead ones with `ww deregister` or the fleet canvas.
+  dead ones with `ww deregister` or the fleet view.
 - Mailbox ownership uses `:global`, which assumes a connected full-mesh cluster;
   OTP may log and resolve a name conflict during concurrent takeover.
 - Canvas comments made before a reload persist only in that browser tab.
   Reloads replay the canvas's whole history; deltas keep that small, but
-  every full publish of a large page stays in it. A page's scripts can stream data to itself but
-  cannot send messages to the agent. The Pi adapter forgets which canvases it
-  opened when its session restarts, after which their comments are refused.
+  every full publish of a large page stays in it. A page's scripts can send actions
+  (`waterworks.action`) but not comments. The Pi adapter keeps the canvases it
+  opened across `/reload`, but forgets them when Pi restarts, after which their
+  comments are refused.
   Other harnesses are not implemented.

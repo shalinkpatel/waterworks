@@ -2,11 +2,11 @@
 // test cannot see into, so every check reads what the in-frame helper put into comments.
 import { api, launch, until } from "./cdp.mjs";
 
-const { WW_URL: base, AGENT_ID, AGENT_TOKEN, DASH_ID, DASH_TOKEN, CHROME } = process.env;
-const dash = { id: DASH_ID, token: DASH_TOKEN };
+const { WW_URL: base, AGENT_ID, AGENT_TOKEN, CANVAS_ID, CANVAS_TOKEN, CHROME } = process.env;
+const canvas = { id: CANVAS_ID, token: CANVAS_TOKEN };
 const agent = api(base, { id: AGENT_ID, token: AGENT_TOKEN });
 const send = async (type, payload, extra = {}) =>
-  (await agent("POST", "/v1/messages", { to: dash.id, type, payload, ...extra })).message;
+  (await agent("POST", "/v1/messages", { to: canvas.id, type, payload, ...extra })).message;
 
 const page = (heading, padding = "") => `<!doctype html>
 <html><head><title>${heading}</title></head>
@@ -47,7 +47,7 @@ try {
   await send("canvas.render.v1", { title: "Report", html: page("Report v1") });
   const early = await send("canvas.data.v1", { p50: 42 });
 
-  await cdp("Page.navigate", { url: `${base}/canvas#${new URLSearchParams({ endpoint: dash.id, token: dash.token })}` });
+  await cdp("Page.navigate", { url: `${base}/canvas#${new URLSearchParams({ endpoint: canvas.id, token: canvas.token })}` });
   const settled = (sequence) =>
     until(`sequence ${sequence}`, () => evaluate(`Number(document.body.dataset.sequence) >= ${sequence}`));
   await settled(early.sequence);

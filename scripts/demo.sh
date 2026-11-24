@@ -69,18 +69,18 @@ agent_id=$(jq -r .endpoint.id <<<"$agent")
 agent_token=$(jq -r .token <<<"$agent")
 export WW_ENDPOINT="$agent_id" WW_TOKEN="$agent_token"
 printf 'x-ww-endpoint: %s\nauthorization: Bearer %s\n' "$agent_id" "$agent_token" >"$dir/agent-headers"
-dash=$(./ww canvas --title "Live fleet")
-dash_id=$(jq -r .endpoint.id <<<"$dash")
-jq -r .url <<<"$dash" >"$dir/url"
+canvas=$(./ww canvas --title "Live fleet")
+canvas_id=$(jq -r .endpoint.id <<<"$canvas")
+jq -r .url <<<"$canvas" >"$dir/url"
 
 send() { # type payload [reply_to]
-  jq -n --arg to "$dash_id" --arg type "$1" --argjson payload "$2" --arg reply "${3:-}" \
+  jq -n --arg to "$canvas_id" --arg type "$1" --argjson payload "$2" --arg reply "${3:-}" \
     '{to: $to, type: $type, payload: $payload} + (if $reply == "" then {} else {reply_to: $reply} end)' |
     curl -fsS -o /dev/null -X POST "$url/v1/messages" -H "content-type: application/json" \
       -H @"$dir/agent-headers" -d @-
 }
 
-./ww publish --to "$dash_id" --file scripts/demo/page.html --title "Live fleet" --watch 2>>"$dir/publish.log" &
+./ww publish --to "$canvas_id" --file scripts/demo/page.html --title "Live fleet" --watch 2>>"$dir/publish.log" &
 pids+=($!)
 sleep 1
 

@@ -249,6 +249,74 @@ defmodule WwTransportTest do
              ])
   end
 
+  test "HTTP tail streams messages; without ?ack=1 they stay pending until acknowledged" do
+    {reader, reader_token} = register("tool", "reader")
+    {writer, writer_token} = register("tool", "writer")
+
+    # A raw socket keeps the open stream off the HTTP client the rest of the test uses.
+    {:ok, tail} = :gen_tcp.connect(~c"127.0.0.1", 17_420, [:binary, active: false])
+    on_exit(fn -> :gen_tcp.close(tail) end)
+
+    :ok =
+      :gen_tcp.send(
+        tail,
+        "GET /v1/endpoints/#{reader.id}/tail HTTP/1.1\r\nhost: 127.0.0.1\r\n" <>
+          "authorization: Bearer #{reader_token}\r\n\r\n"
+      )
+
+    assert {%{"op" => "ready"}, buffer} = next_line(tail, "")
+
+    assert {201, _} =
+             TestHTTP.request(
+               :post,
+               "/v1/messages",
+               %{id: "msg_tail", to: reader.id, type: "x.v1", payload: %{n: 1}},
+               TestHTTP.auth(writer.id, writer_token)
+             )
+
+    assert {%{"op" => "message", "message" => %{"id" => "msg_tail", "payload" => %{"n" => 1}}}, _} =
+             next_line(tail, buffer)
+
+    status = fn ->
+      {200, %{"status" => status}} =
+        TestHTTP.request(
+          :get,
+          "/v1/messages/msg_tail",
+          nil,
+          TestHTTP.auth(writer.id, writer_token)
+        )
+
+      status
+    end
+
+    assert status.() == "pending"
+
+    assert {200, _} =
+             TestHTTP.request(
+               :post,
+               "/v1/endpoints/#{reader.id}/ack",
+               %{id: "msg_tail"},
+               TestHTTP.auth(reader.id, reader_token)
+             )
+
+    assert status.() == "acked"
+  end
+
+  # The next JSON line of the tail; chunk-size lines and headers are skipped.
+  defp next_line(socket, buffer) do
+    case String.split(buffer, "\n", parts: 2) do
+      [line, rest] ->
+        case String.trim(line) do
+          "{" <> _ = json -> {Jason.decode!(json), rest}
+          _ -> next_line(socket, rest)
+        end
+
+      [_partial] ->
+        {:ok, data} = :gen_tcp.recv(socket, 0, 2_000)
+        next_line(socket, buffer <> data)
+    end
+  end
+
   defp register(kind, name, accepts \\ []) do
     assert {201, response} =
              TestHTTP.request(
