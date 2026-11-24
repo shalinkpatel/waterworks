@@ -46,17 +46,19 @@ function send(type, payload) {
 function receive(type, payload) {
   if (type === "log.state.v1") return apply(payload);
   if (type === "log.table_rows.v1") {
-    previews.set(`${payload.entry}/${payload.table}`, payload);
+    previews.set(`${payload.entry}/${payload.revision}/${payload.table}`, payload);
     return renderEntry();
   }
-  if (type === "core.error.v1") return toast(payload.error);
+  // The form stays open until the log accepts the save, so a rejected one keeps your text.
+  if (type === "log.receipt.v1" && saving) { saving = false; return $("form").close(); }
+  if (type === "core.error.v1") { saving = false; return toast(payload.error); }
 }
 
 function apply(state) {
   if (!Array.isArray(state?.entries)) return;
   entries = state.entries;
   tags = state.tags || [];
-  logId = state.log || logId;
+  if (!socket) logId = state.log || logId; // standalone: the log id comes from the URL only
   updated = `updated ${when(state.updated)}`;
   render();
   if (openEntry) renderEntry();
@@ -209,12 +211,12 @@ function section(title, ...content) {
 }
 
 function tableView(e, t) {
-  const preview = previews.get(`${e.id}/${t.name}`);
+  const preview = previews.get(`${e.id}/${e.revision}/${t.name}`);
   const summary = el("div", { className: "hint" }, `${t.description ? t.description + " · " : ""}${t.row_count} rows · ` +
     t.columns.map((c) => `${c.name} ${c.type}`).join(", "));
   if (!preview) {
     const b = el("button", { className: "ghost", type: "button", style: "margin-top:8px" }, "Preview rows");
-    b.onclick = () => send("log.table.v1", { entry: e.id, table: t.name, limit: 100 });
+    b.onclick = () => send("log.table.v1", { entry: e.id, table: t.name, limit: 100, revision: e.revision });
     return el("div", {}, summary, b);
   }
   return el("div", {}, summary, el("table", { className: "data" },
@@ -232,7 +234,7 @@ function history(e) {
 }
 
 function actions(e) {
-  const review = (action, note) => send("log.review.v1", { entry: e.id, action, ...(note ? { note } : {}) });
+  const review = (decision, note) => send("log.review.v1", { entry: e.id, decision, ...(note ? { note } : {}) });
   const button = (label, cls, fn) => { const b = el("button", { className: cls, type: "button" }, label); b.onclick = fn; return b; };
   const list = [button("Close", "ghost left", () => $("entry").close()), button("Edit", "ghost", () => openForm(e))];
   if (["approved", "rejected"].includes(e.status)) list.push(button("Reopen", "ghost", () => review("reopen")));
@@ -264,7 +266,7 @@ function openForm(e) {
   $("f-title").value = e?.title || "";
   $("f-body").value = e?.body || "";
   $("f-tags").value = (e?.tags || []).join(", ");
-  $("f-links").value = (e?.links || []).map((l) => (l.label && l.label !== l.url ? `${l.label} | ${l.url}` : l.url)).join("\n");
+  $("f-links").value = (e?.links || []).map(linkLine).join("\n");
   $("f-hint").textContent = e
     ? (e.status === "approved" || e.status === "rejected" ? "Saving puts this entry back in the queue." : "Saving creates a new revision; the entry stays in the queue.")
     : "Your entries go into the queue like everyone else's.";
@@ -273,21 +275,37 @@ function openForm(e) {
   $("f-title").focus();
 }
 
-$("f-cancel").onclick = () => $("form").close();
+// One link per line: "url", "label | url", or "label | url | kind" (pr, dashboard, other).
+const linkLine = (l) => [l.label !== l.url ? l.label : null, l.url, l.kind === "other" || (l.kind === "pr" && /\/pull\/\d+/.test(l.url)) ? null : l.kind]
+  .filter(Boolean).join(" | ");
+function parseLink(line) {
+  const parts = line.split("|").map((s) => s.trim());
+  const url = parts.find((p) => /^https?:\/\//.test(p)) || parts[0];
+  const label = parts[0] !== url ? parts[0] : undefined;
+  const kind = ["pr", "dashboard", "other"].includes(parts.at(-1)) ? parts.at(-1) : undefined;
+  return { url, ...(label ? { label } : {}), ...(kind ? { kind } : {}) };
+}
+
+let saving = false;
+$("f-cancel").onclick = () => { saving = false; $("form").close(); };
 $("f-save").onclick = () => {
-  const links = $("f-links").value.split("\n").map((l) => l.trim()).filter(Boolean).map((line) => {
-    const [label, url] = line.includes("|") ? line.split("|").map((s) => s.trim()) : [null, line];
-    return label ? { label, url } : { url };
-  });
-  const payload = {
-    title: $("f-title").value,
-    body: $("f-body").value,
-    tags: $("f-tags").value.split(",").map((t) => t.trim()).filter(Boolean),
-    links,
+  const text = { title: $("f-title").value, body: $("f-body").value, tags: $("f-tags").value, links: $("f-links").value };
+  const parse = {
+    title: (v) => v,
+    body: (v) => v,
+    tags: (v) => v.split(",").map((t) => t.trim()).filter(Boolean),
+    links: (v) => v.split("\n").map((l) => l.trim()).filter(Boolean).map(parseLink),
   };
-  if (editing === "new") send("log.submit.v1", payload);
-  else send("log.edit.v1", { entry: editing, ...payload });
-  $("form").close();
+  const fields = Object.fromEntries(Object.entries(text).map(([k, v]) => [k, parse[k](v)]));
+  saving = true;
+  if (editing === "new") return send("log.submit.v1", fields);
+  // Send only fields whose text changed, so an edit never overwrites what the author revised
+  // meanwhile, and untouched links keep their kind.
+  const e = entries.find((x) => x.id === editing);
+  const before = { title: e.title, body: e.body, tags: e.tags.join(", "), links: e.links.map(linkLine).join("\n") };
+  const changed = Object.fromEntries(Object.keys(text).filter((k) => text[k].trim() !== before[k].trim()).map((k) => [k, fields[k]]));
+  if (!Object.keys(changed).length) { saving = false; return $("form").close(); }
+  send("log.edit.v1", { entry: editing, ...changed });
 };
 $("new").onclick = () => openForm(null);
 $("q").oninput = render;
@@ -323,7 +341,8 @@ if (params.get("endpoint") && params.get("token")) {
       const frame = JSON.parse(data);
       if (frame.op !== "message") return;
       ws.send(JSON.stringify({ op: "ack", id: frame.message.id }));
-      receive(frame.message.type, frame.message.payload);
+      // Anyone can message this view's endpoint; only the log it belongs to is trusted.
+      if (frame.message.from === logId) receive(frame.message.type, frame.message.payload);
     };
     ws.onclose = (event) => {
       socket = null;

@@ -65,8 +65,9 @@ defmodule Ww.Log.Entry do
         t |> String.trim() |> String.downcase() |> String.replace(~r/\s+/, "-")
       end
 
-    if length(tags) == length(Enum.uniq(list)) and
-         Enum.all?(tags, &(&1 =~ ~r/^[a-z0-9][a-z0-9._-]{0,39}$/)),
+    # Normalizing may merge tags ("Bench", "bench"): they are the same tag.
+    if Enum.all?(list, &is_binary/1) and
+         Enum.all?(tags, &(&1 =~ ~r/\A[a-z0-9][a-z0-9._-]{0,39}\z/)),
        do: {:ok, tags},
        else: {:error, "tags must be up to 20 short names (letters, digits, . _ -)"}
   end
@@ -135,7 +136,7 @@ defmodule Ww.Log.Entry do
   def table(%{"name" => name, "columns" => columns, "rows" => rows} = t)
       when is_binary(name) and is_list(columns) and is_list(rows) do
     with :ok <-
-           check(name =~ ~r/^[a-z][a-z0-9_]{0,40}$/, "table names look like latency_by_batch"),
+           check(name =~ ~r/\A[a-z][a-z0-9_]{0,40}\z/, "table names look like latency_by_batch"),
          {:ok, columns} <- columns(columns),
          :ok <- check(length(rows) <= @max_rows, "tables hold at most #{@max_rows} rows"),
          :ok <-
@@ -181,7 +182,8 @@ defmodule Ww.Log.Entry do
       Enum.any?(columns, &(&1.name == "" or String.length(&1.name) > 64)) ->
         {:error, "column names must be 1-64 characters"}
 
-      length(Enum.uniq_by(columns, & &1.name)) != length(columns) ->
+      # DuckDB column names are case-insensitive.
+      length(Enum.uniq_by(columns, &String.downcase(&1.name))) != length(columns) ->
         {:error, "column names must be unique"}
 
       Enum.any?(columns, &(&1.type && &1.type not in @types)) ->
@@ -199,11 +201,20 @@ defmodule Ww.Log.Entry do
     present = Enum.reject(values, &is_nil/1)
 
     cond do
-      present == [] -> "VARCHAR"
-      Enum.all?(present, &is_integer/1) -> "BIGINT"
-      Enum.all?(present, &is_number/1) -> "DOUBLE"
-      Enum.all?(present, &is_boolean/1) -> "BOOLEAN"
-      true -> "VARCHAR"
+      present == [] ->
+        "VARCHAR"
+
+      Enum.all?(present, &(is_integer(&1) and &1 in -0x8000000000000000..0x7FFFFFFFFFFFFFFF)) ->
+        "BIGINT"
+
+      Enum.all?(present, &is_number/1) ->
+        "DOUBLE"
+
+      Enum.all?(present, &is_boolean/1) ->
+        "BOOLEAN"
+
+      true ->
+        "VARCHAR"
     end
   end
 
@@ -224,7 +235,10 @@ defmodule Ww.Log.Entry do
   end
 
   defp coerce(nil, _), do: nil
-  defp coerce(v, "BIGINT") when is_integer(v), do: v
+
+  defp coerce(v, "BIGINT") when is_integer(v) and v in -0x8000000000000000..0x7FFFFFFFFFFFFFFF,
+    do: v
+
   defp coerce(v, "DOUBLE") when is_number(v), do: v / 1
   defp coerce(v, "BOOLEAN") when is_boolean(v), do: v
   defp coerce(v, "VARCHAR") when is_binary(v), do: v

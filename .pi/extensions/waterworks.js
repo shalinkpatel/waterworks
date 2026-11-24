@@ -300,14 +300,22 @@ export default function waterworks(pi) {
     const log = found.find((e) => e.metadata?.tool === "log") || found[0];
     if (!log) throw new Error("no ww log is running (start it with `ww log`)");
     const id = `msg_${crypto.randomUUID()}`;
+    let timer;
     const reply = new Promise((resolve, reject) => {
       replies.set(id, resolve);
-      setTimeout(() => replies.delete(id) && reject(new Error("ww log did not answer within 15s")), 15_000);
+      timer = setTimeout(() => reject(new Error("ww log did not answer within 15s")), 15_000);
     });
-    await send({ id, to: log.id, type, payload, reply_to: null });
-    const message = await reply;
-    if (message.type === "core.error.v1") throw new Error(`ww log: ${message.payload?.error}`);
-    return message.payload;
+    // Always clean up, including when send throws (then nothing awaits reply, so its timer
+    // must not fire into an unhandled rejection).
+    try {
+      await send({ id, to: log.id, type, payload, reply_to: null });
+      const message = await reply;
+      if (message.type === "core.error.v1") throw new Error(`ww log: ${message.payload?.error}`);
+      return message.payload;
+    } finally {
+      clearTimeout(timer);
+      replies.delete(id);
+    }
   }
 
   pi.registerTool({

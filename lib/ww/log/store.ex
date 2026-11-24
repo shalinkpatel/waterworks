@@ -49,8 +49,12 @@ defmodule Ww.Log.Store do
   """
 
   def open(dir) do
-    File.mkdir_p!(dir)
-    File.chmod!(dir, 0o700)
+    # Private only when we create it; an existing --dir keeps the user's permissions.
+    unless File.dir?(dir) do
+      File.mkdir_p!(dir)
+      File.chmod!(dir, 0o700)
+    end
+
     {:ok, sql} = Sql.open(Path.join(dir, "log.sqlite"))
     # synchronous=FULL: a committed review survives power loss, not just a crash.
     :ok =
@@ -254,7 +258,8 @@ defmodule Ww.Log.Store do
     tables =
       query(
         store,
-        "SELECT entry_id, revision, name, description, columns, row_count FROM data_tables#{where}",
+        # Only the current revision's tables are shown; older ones stay in the store.
+        "SELECT t.entry_id, t.revision, t.name, t.description, t.columns, t.row_count FROM data_tables t JOIN entries e ON e.id = t.entry_id AND e.revision = t.revision#{String.replace(where, "entry_id", "t.entry_id")}",
         args
       )
       |> Enum.group_by(&{Enum.at(&1, 0), Enum.at(&1, 1)}, fn [
@@ -273,7 +278,7 @@ defmodule Ww.Log.Store do
     for [eid, status, rev, author, created, updated] <-
           query(
             store,
-            "SELECT id, status, revision, author, created_at, updated_at FROM entries#{entry_where} ORDER BY created_at",
+            "SELECT id, status, revision, author, created_at, updated_at FROM entries#{entry_where} ORDER BY created_at, rowid",
             args
           ) do
       history = Map.get(revisions, eid, [])
@@ -297,7 +302,6 @@ defmodule Ww.Log.Store do
     end
   end
 
-  defp author_by(%{"user" => true}), do: "user"
   defp author_by(author), do: author["endpoint"] || "user"
 
   defp transaction(store, fun) do

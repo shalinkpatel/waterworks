@@ -15,7 +15,7 @@ defmodule Ww.Log do
   `log.approved.v1` and `log.rejected.v1`.
 
   From the user (the log's own view, or a subscribed canvas via `canvas.action.v1 {action, ...}`):
-  `log.subscribe.v1 {to?}`, `log.review.v1 {entry, action, note?}` (approve, reject,
+  `log.subscribe.v1 {to?}`, `log.review.v1 {entry, decision, note?}` (approve, reject,
   request_changes, reopen), `log.edit.v1 {entry, ...changes}` and `log.submit.v1`. Any edit
   puts the entry back in the queue (pending). Subscribers get `log.state.v1` (canvases:
   `canvas.data.v1`) with `{log, entries, tags, updated}`. Errors answer `core.error.v1`.
@@ -100,7 +100,7 @@ defmodule Ww.Log do
 
   @doc false
   def handle(state, %{"from" => from} = message) do
-    {type, payload} = unwrap(message, state)
+    {type, payload} = unwrap(message)
     user? = user?(state, from)
 
     case run_command(state, type, payload, from, user?) do
@@ -124,11 +124,12 @@ defmodule Ww.Log do
   end
 
   # Canvas pages send canvas.action.v1 {action: "review" | "edit" | "submit" | "table", ...}.
-  defp unwrap(%{"type" => "canvas.action.v1", "payload" => %{"action" => action} = p}, _state)
-       when action in ~w(review edit submit table subscribe),
+  # A canvas page cannot subscribe itself: only endpoints outside the page can (see subscribe).
+  defp unwrap(%{"type" => "canvas.action.v1", "payload" => %{"action" => action} = p})
+       when action in ~w(review edit submit table),
        do: {"log.#{action}.v1", Map.delete(p, "action")}
 
-  defp unwrap(%{"type" => type} = m, _state), do: {type, m["payload"] || %{}}
+  defp unwrap(%{"type" => type} = m), do: {type, m["payload"] || %{}}
 
   defp user?(state, from), do: from == state.viewer or state.subscribers[from] == "canvas.data.v1"
 
@@ -136,9 +137,6 @@ defmodule Ww.Log do
     target = payload["to"] || from
 
     cond do
-      target == from and from == state.viewer ->
-        {:ok, state, true}
-
       canvas?(state, target) ->
         {:ok, put_in(state.subscribers[target], "canvas.data.v1"), true}
 
@@ -187,10 +185,10 @@ defmodule Ww.Log do
 
   defp run_command(state, "log.review.v1", payload, _from, true) do
     with {:ok, entry} <- fetch(state, payload["entry"]),
-         {:ok, status} <- transition(entry.status, payload["action"]) do
+         {:ok, status} <- transition(entry.status, payload["decision"]) do
       note = if is_binary(payload["note"]) and payload["note"] != "", do: payload["note"]
-      Store.set_status(state.store, entry.id, status, payload["action"], note, now())
-      notify(state, entry, payload["action"], note)
+      Store.set_status(state.store, entry.id, status, payload["decision"], note, now())
+      notify(state, entry, payload["decision"], note)
       {:ok, state, true}
     end
   end
@@ -207,7 +205,7 @@ defmodule Ww.Log do
           (not is_list(payload["tags"]) or Enum.all?(payload["tags"], &(&1 in e.tags))) and
           (payload["mine"] != true or e.author["endpoint"] == from)
       end)
-      |> Enum.take(-min(payload["limit"] || 50, 200))
+      |> Enum.take(-limit(payload["limit"], 50, 200))
       |> Enum.map(&Map.drop(&1, [:revisions]))
 
     {:reply, "log.entries.v1", %{entries: entries}, state}
@@ -224,11 +222,12 @@ defmodule Ww.Log do
          _user?
        )
        when is_binary(entry) and is_binary(table) do
-    limit = min(max(payload["limit"] || 100, 1), 1_000)
+    limit = limit(payload["limit"], 100, 1_000)
 
     case Store.table_rows(state.store, entry, table, limit) do
       {:ok, data} ->
-        {:reply, "log.table_rows.v1", Map.merge(data, %{entry: entry, table: table}), state}
+        {:reply, "log.table_rows.v1",
+         Map.merge(data, %{entry: entry, table: table, revision: payload["revision"]}), state}
 
       {:error, :unknown_table} ->
         {:error, "no table #{table} on #{entry}"}
@@ -278,18 +277,25 @@ defmodule Ww.Log do
       end
 
     with {type, payload} <- message do
-      try do
-        Tool.send_message(state.auth, entry.author["endpoint"], type, payload)
-      rescue
-        _ ->
+      # A closed Pi session stays registered but offline: its mailbox would hold the request
+      # with nobody to act on it, so tell the user instead (they can edit and approve).
+      online? =
+        try do
+          Tool.send_message(state.auth, entry.author["endpoint"], type, payload)
+          author_online?(state, entry.author["endpoint"])
+        rescue
+          _ -> false
+        end
+
+      if action == "request_changes" and not online?,
+        do:
           Store.note(
             state.store,
             entry.id,
             "undeliverable",
-            "the author's session is gone",
+            "the author's session is not connected",
             now()
           )
-      end
     end
   end
 
@@ -305,6 +311,13 @@ defmodule Ww.Log do
       "harness" => meta["harness"],
       "cwd" => meta["cwd"]
     }
+  end
+
+  defp author_online?(state, id) do
+    query = URI.encode_query(%{"online" => "true"})
+
+    Tool.request(:get, "/v1/endpoints?" <> query, nil, state.auth)["endpoints"]
+    |> Enum.any?(&(&1["id"] == id))
   end
 
   defp canvas?(state, id) do
@@ -337,7 +350,9 @@ defmodule Ww.Log do
           Tool.send_message(state.auth, to, type, payload)
           true
         rescue
-          _ -> false
+          error ->
+            IO.puts(:stderr, "dropping subscriber #{to}: #{Exception.message(error)}")
+            false
         end
       end)
 
@@ -356,6 +371,9 @@ defmodule Ww.Log do
   rescue
     _ -> :ok
   end
+
+  defp limit(n, _default, max) when is_integer(n) and n > 0, do: min(n, max)
+  defp limit(_n, default, _max), do: default
 
   defp check(true, _), do: :ok
   defp check(false, reason), do: {:error, reason}
