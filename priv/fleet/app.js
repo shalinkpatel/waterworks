@@ -7,11 +7,18 @@ let updated = "waiting for data";
 let fleetId = null;
 let socket = null;
 
+// The fleet sends UTC; show it in this machine's time zone, e.g. "updated Nov 23, 6:10:18 PM PST".
+function localTime(iso) {
+  const t = new Date(String(iso).replace(/^updated /, "")); // older fleets prefixed "updated "
+  if (!iso || isNaN(t)) return iso || "live";
+  return `updated ${t.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium", timeZoneName: "short" })}`;
+}
+
 function apply(state) {
   if (!Array.isArray(state?.endpoints)) return;
   pending.delete("remove_offline");
   endpoints = state.endpoints;
-  updated = state.updated || "live";
+  updated = localTime(state.updated);
   fleetId = state.fleet || fleetId;
   render();
 }
@@ -146,9 +153,19 @@ function pickAllCell() {
 function composer() {
   // Drop selections that went offline or were removed.
   for (const id of selected) if (!endpoints.some((e) => e.id === id && selectable(e))) selected.delete(id);
-  $("composer").hidden = !canBroadcast() || selected.size === 0;
-  $("who").textContent = `${selected.size} session${selected.size === 1 ? "" : "s"}`;
+  $("broadcast-open").hidden = !canBroadcast() || selected.size === 0;
+  $("broadcast-open").textContent = `Broadcast to ${selected.size}`;
 }
+
+const plural = (n) => `${n} session${n === 1 ? "" : "s"}`;
+$("broadcast-open").onclick = () => {
+  const names = endpoints.filter((e) => selected.has(e.id));
+  $("compose-title").textContent = `Broadcast to ${plural(names.length)}`;
+  $("recipients").replaceChildren(...names.map((e) => el("span", { className: "chip" }, e.name)));
+  $("compose").showModal();
+  $("broadcast-text").focus();
+};
+$("broadcast-cancel").onclick = () => $("compose").close();
 
 let receipt = null; // id of the broadcast shown in the modal
 $("broadcast-send").onclick = () => {
@@ -162,12 +179,13 @@ $("broadcast-send").onclick = () => {
   } else {
     window.waterworks.action({ to: fleetId, action: "broadcast", ...request });
   }
+  $("compose").close();
   showReceipts({ broadcast: receipt, text, sessions: names.map((e) => ({ id: e.id, name: e.name, status: "sending" })) });
   $("broadcast-text").value = "";
   selected.clear();
   render();
 };
-$("broadcast-clear").onclick = () => { selected.clear(); render(); };
+$("broadcast-clear").onclick = () => { selected.clear(); $("compose").close(); render(); };
 $("broadcast-text").onkeydown = (ev) => { if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) $("broadcast-send").click(); };
 $("receipts-close").onclick = () => $("receipts").close();
 

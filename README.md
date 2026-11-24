@@ -365,7 +365,7 @@ Messages: `fleet.subscribe.v1 {to?}` (yourself, or a canvas), `fleet.unsubscribe
 `fleet.shutdown.v1 {id}` (online: sends it `core.shutdown.v1`). A subscribed canvas
 sends the same as `canvas.action.v1 {action, id}`. Subscribers receive `fleet.state.v1` (canvases:
 `canvas.data.v1`) with `{fleet, endpoints: [{name, kind, type, status, id, cwd}],
-updated}`. Offline rows have Remove; online rows have Shut down and Disconnect (click twice
+updated (UTC ISO 8601)}`. Offline rows have Remove; online rows have Shut down and Disconnect (click twice
 to confirm). **Remove all offline** in the toolbar (`fleet.remove_offline.v1`) clears
 every offline endpoint except the fleet's current subscribers, such as its viewer. Shutting the fleet down from its own row (or sending it
 `core.shutdown.v1`) deregisters the fleet and its viewer and exits.
