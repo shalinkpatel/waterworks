@@ -9,8 +9,6 @@ defmodule WwWeb.Static do
   @tool "default-src 'self'; connect-src 'self' ws: wss:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; frame-ancestors 'none'"
 
   @files %{
-    "/demo" => {"demo/index.html", "text/html", @strict},
-    "/demo/app.js" => {"demo/app.js", "text/javascript", @strict},
     "/fleet" => {"fleet/index.html", "text/html", @tool},
     "/fleet/app.js" => {"fleet/app.js", "text/javascript", @tool},
     "/fleet/icon.svg" => {"fleet/icon.svg", "image/svg+xml", @tool},

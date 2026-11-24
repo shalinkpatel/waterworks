@@ -220,15 +220,15 @@ const PAGE = 100;
 let viewing = null; // {entry, revision, table, columns, total, offset, order_by, desc, rows}
 
 function openTable(e, t) {
-  viewing = { entry: e.id, revision: e.revision, table: t.name, description: t.description, columns: t.columns, total: t.row_count, offset: 0, order_by: null, desc: false, rows: null };
+  viewing = { entry: e.id, table: t.name, description: t.description, columns: t.columns, total: t.row_count, offset: 0, order_by: null, desc: false, rows: null };
   requestPage();
   renderTable();
   $("table").showModal();
 }
 
 function requestPage(extra = {}) {
-  const { entry, revision, table, offset, order_by, desc } = viewing;
-  send("log.table.v1", { entry, table, revision, limit: PAGE, offset, ...(order_by ? { order_by, desc } : {}), ...extra });
+  const { entry, table, offset, order_by, desc } = viewing;
+  send("log.table.v1", { entry, table, limit: PAGE, offset, ...(order_by ? { order_by, desc } : {}), ...extra });
 }
 
 function tablePage(page) {

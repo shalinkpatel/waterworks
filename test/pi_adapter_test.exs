@@ -35,14 +35,14 @@ defmodule WwPiAdapterTest do
         op: "send",
         id: "msg_pi_roundtrip",
         to: agent["id"],
-        type: "demo.echo.v1",
-        payload: %{text: "hello pi"}
+        type: "test.ping.v1",
+        payload: %{text: "hello pi", delivery: "immediate"}
       })
 
     {socket, accepted} = TestWS.receive_json(socket, 5_000)
     assert accepted["op"] == "accepted"
     {socket, response} = TestWS.receive_json(socket, 5_000)
-    assert response["message"]["type"] == "demo.echoed.v1"
+    assert response["message"]["type"] == "test.pong.v1"
     assert response["message"]["payload"]["text"] == "hello from pi"
     assert response["message"]["reply_to"] == "msg_pi_roundtrip"
     socket = TestWS.send_json(socket, %{op: "ack", id: response["message"]["id"]})
@@ -88,8 +88,8 @@ defmodule WwPiAdapterTest do
                %{
                  id: "msg_pi_reconnect",
                  to: agent["id"],
-                 type: "demo.echo.v1",
-                 payload: %{text: "offline"}
+                 type: "test.ping.v1",
+                 payload: %{text: "offline", delivery: "immediate"}
                },
                TestHTTP.auth(browser.id, browser_token)
              )
@@ -98,7 +98,7 @@ defmodule WwPiAdapterTest do
     reconnected = TestWS.connect(browser.id, browser_token)
     {reconnected, pending} = TestWS.receive_json(reconnected, 5_000)
     assert pending["message"]["reply_to"] == "msg_pi_reconnect"
-    assert pending["message"]["type"] == "demo.echoed.v1"
+    assert pending["message"]["type"] == "test.pong.v1"
     _ = TestWS.send_json(reconnected, %{op: "ack", id: pending["message"]["id"]})
   end
 

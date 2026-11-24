@@ -99,7 +99,7 @@ defmodule WwCanvasTest do
 
   defp run_browser(script) do
     {agent, agent_token} = register(%{kind: "agent", name: "canvas-agent"})
-    {dash, dash_token} = register(Ww.CLI.canvas_endpoint("Fleet health"))
+    {canvas, canvas_token} = register(Ww.CLI.canvas_endpoint("Fleet health"))
 
     {output, status} =
       System.cmd("node", [script],
@@ -108,8 +108,8 @@ defmodule WwCanvasTest do
           {"WW_URL", "http://127.0.0.1:17420"},
           {"AGENT_ID", agent},
           {"AGENT_TOKEN", agent_token},
-          {"DASH_ID", dash},
-          {"DASH_TOKEN", dash_token},
+          {"CANVAS_ID", canvas},
+          {"CANVAS_TOKEN", canvas_token},
           {"CHROME", @chrome}
         ]
       )

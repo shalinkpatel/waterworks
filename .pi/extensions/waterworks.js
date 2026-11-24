@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 
-const acceptedTypes = ["demo.echo.v1", "canvas.comment.v1", "core.error.v1", "log.changes_requested.v1"];
+const acceptedTypes = ["canvas.comment.v1", "core.error.v1", "log.changes_requested.v1"];
 const canvasTypes = [
   "canvas.render.v1", "canvas.delta.v1", "canvas.patch.v1", "canvas.data.v1", "canvas.reply.v1",
   "canvas.clear.v1",
@@ -218,7 +218,7 @@ export default function waterworks(pi) {
               kind: "agent",
               name: endpointName(pi.getSessionName()),
               accepts: [...acceptedTypes, "core.shutdown.v1", "log.approved.v1", "log.rejected.v1"],
-              emits: ["demo.echoed.v1", "core.error.v1", ...canvasTypes],
+              emits: ["core.error.v1", ...canvasTypes],
               metadata: { harness: "pi", cwd: ctx.cwd, pid: String(process.pid) },
             },
             { "x-ww-admin-token": admin },

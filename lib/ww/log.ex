@@ -1,27 +1,13 @@
 defmodule Ww.Log do
   @moduledoc """
-  `ww log`: a tool endpoint where agents (and the user) log work items and results for the
-  user to review. Entries persist in `Ww.Log.Store` and are restored on launch; the endpoint id
-  changes per launch, so agents find it by discovery (accepts `log.submit.v1`).
-
-  From agents:
-    * `log.submit.v1 {title, body?, tags?, links?, tables?}` -> `log.receipt.v1 {entry, status}`
-    * `log.revise.v1 {entry, ...changes}` from the author, while pending or changes_requested
-    * `log.query.v1 {status?, tags?, mine?, limit?}` -> `log.entries.v1 {entries}`
-    * `log.tags.v1 {}` -> `log.tag_list.v1 {tags: [{name, count}]}` (excludes rejected entries)
-    * `log.table.v1 {entry, table, limit?}` -> `log.table_rows.v1 {entry, table, columns, rows}`
-
-  To the author: `log.changes_requested.v1 {entry, note}` (delivery immediate),
-  `log.approved.v1` and `log.rejected.v1`.
-
-  From the user (the log's own view, or a subscribed canvas via `canvas.action.v1 {action, ...}`):
-  `log.subscribe.v1 {to?}`, `log.review.v1 {entry, decision, note?}` (approve, reject,
-  request_changes, reopen), `log.edit.v1 {entry, ...changes}` and `log.submit.v1`. Any edit
-  puts the entry back in the queue (pending). Subscribers get `log.state.v1` (canvases:
-  `canvas.data.v1`) with `{log, entries, tags, updated}`. Errors answer `core.error.v1`.
+  `ww log`: a work log with a review queue. Agents (and the user) submit entries; the user
+  approves, rejects or requests changes, which go back to the author as a prompt. Entries
+  persist in `Ww.Log.Store` and are restored on launch; the endpoint id changes per launch,
+  so agents find it by discovery (accepts `log.submit.v1`). The message protocol is in the
+  README ("Example tool: log").
   """
 
-  alias Ww.{Tool}
+  alias Ww.Tool
   alias Ww.Log.{Entry, Store}
 
   @external_resource Path.expand("../../priv/log/index.html", __DIR__)
@@ -237,7 +223,6 @@ defmodule Ww.Log do
     echo = %{
       entry: entry,
       table: table,
-      revision: payload["revision"],
       order_by: payload["order_by"],
       desc: opts[:desc]
     }

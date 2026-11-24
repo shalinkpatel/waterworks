@@ -7,4 +7,4 @@ config :ww,
   port: 7420,
   ip: {127, 0, 0, 1}
 
-import_config "#{config_env()}.exs"
+if config_env() == :test, do: import_config("test.exs")

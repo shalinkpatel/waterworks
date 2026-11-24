@@ -200,11 +200,6 @@ defmodule Ww.CLI do
     stream_tail(if opts[:ack], do: "?ack=1", else: "") |> stream()
   end
 
-  defp client("echo", _args) do
-    IO.puts(:stderr, "ww echo connected as #{endpoint_id()}")
-    stream_tail("") |> stream_lines("")
-  end
-
   defp client(command, _) do
     IO.puts(:stderr, "ww: unknown command #{command}")
     usage()
@@ -323,56 +318,6 @@ defmodule Ww.CLI do
     end
   end
 
-  defp stream_lines(ref, buffer) do
-    receive do
-      {:http, {^ref, :stream_start, _headers}} ->
-        stream_lines(ref, buffer)
-
-      {:http, {^ref, :stream, body}} ->
-        parts = String.split(buffer <> body, "\n")
-        {lines, [rest]} = Enum.split(parts, -1)
-        Enum.each(lines, &handle_echo_line/1)
-        stream_lines(ref, rest)
-
-      {:http, {^ref, :stream_end, _headers}} ->
-        if buffer != "", do: handle_echo_line(buffer)
-        :ok
-
-      {:http, {^ref, {{_, status, _}, _, body}}} ->
-        raise("HTTP #{status}: #{body}")
-
-      {:http, {^ref, {:error, reason}}} ->
-        raise("stream failed: #{inspect(reason)}")
-    end
-  end
-
-  defp handle_echo_line(line) do
-    case Jason.decode!(line) do
-      %{"op" => "message", "message" => message} -> respond_to_echo(message)
-      _ -> :ok
-    end
-  end
-
-  defp respond_to_echo(%{"type" => "demo.echo.v1"} = message) do
-    response = %{
-      id: "#{message["id"]}-echo",
-      to: message["from"],
-      type: "demo.echoed.v1",
-      payload: %{text: message["payload"]["text"], echoed_by: endpoint_id()},
-      reply_to: message["id"]
-    }
-
-    _ = request(:post, "/v1/messages", response)
-    _ = request(:post, "/v1/endpoints/#{endpoint_id()}/ack", %{id: message["id"]})
-    :ok
-  end
-
-  defp respond_to_echo(message) do
-    IO.puts(:stderr, "ww echo ignoring #{message["type"]}")
-    _ = request(:post, "/v1/endpoints/#{endpoint_id()}/ack", %{id: message["id"]})
-    :ok
-  end
-
   defp start_distribution(name) do
     unless Node.alive?() do
       flags =
@@ -470,7 +415,6 @@ defmodule Ww.CLI do
     ww deregister ENDPOINT_ID  (deletes it and its messages; admin token, or self)
     ww send --to ENDPOINT_ID --type TYPE [--data JSON] [--id ID] [--reply-to ID]
     ww tail [--ack]
-    ww echo
     ww ack --id MESSAGE_ID
     ww history
 

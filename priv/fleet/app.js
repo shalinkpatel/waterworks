@@ -11,18 +11,18 @@ let socket = null;
 
 // The fleet sends UTC; show it in this machine's time zone, e.g. "updated Nov 23, 6:10:18 PM PST".
 function localTime(iso) {
-  const t = new Date(String(iso).replace(/^updated /, "")); // older fleets prefixed "updated "
-  if (!iso || isNaN(t)) return iso || "live";
+  const t = new Date(iso);
+  if (!iso || isNaN(t)) return "live";
   // dateStyle/timeStyle cannot be combined with timeZoneName (throws "Invalid option").
   const format = { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" };
-  return `updated ${t.toLocaleString(undefined, format)}`;
+  return t.toLocaleString(undefined, format);
 }
 
 function apply(state) {
   if (!Array.isArray(state?.endpoints)) return;
   pending.delete("remove_offline");
   endpoints = state.endpoints;
-  updated = localTime(state.updated);
+  updated = `updated ${localTime(state.updated)}`;
   fleetId = state.fleet || fleetId;
   broadcasts = Array.isArray(state.broadcasts) ? state.broadcasts : broadcasts;
   // Keep an open receipts modal current from the broadcast history.
@@ -45,7 +45,11 @@ const filters = { kind: new Set(), type: new Set(), status: new Set() };  // emp
 let sort = { col: "status", dir: -1 };                    // online first
 
 const $ = (id) => document.getElementById(id);
-const el = (tag, props = {}, text) => Object.assign(document.createElement(tag), props, text != null ? { textContent: text } : {});
+const el = (tag, props = {}, ...children) => {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children.filter((c) => c != null));
+  return node;
+};
 
 function stats() {
   const count = (f) => endpoints.filter(f).length;
@@ -200,14 +204,13 @@ $("receipts-close").onclick = () => $("receipts").close();
 
 function showReceipts(status) {
   if (status.broadcast !== receipt) return;
-  const label = { sending: "sending…", pending: "waiting", acked: "received ✓", failed: "failed" };
   const acked = status.sessions.filter((s) => s.status === "acked").length;
   $("receipts-text").textContent = status.text;
   $("receipts-tally").textContent = `${acked} of ${status.sessions.length} acknowledged`;
   $("receipts-list").replaceChildren(...status.sessions.map((s) => {
     const li = el("li");
     const cls = s.status === "sending" ? "pending" : s.status;
-    li.append(el("span", {}, s.name), el("span", { className: `badge ${cls}` }, label[s.status] || s.status));
+    li.append(el("span", {}, s.name), el("span", { className: `badge ${cls}` }, STATUS[s.status] || s.status));
     return li;
   }));
   if (!$("receipts").open) $("receipts").showModal();
@@ -224,7 +227,7 @@ function renderBroadcasts() {
     item.setAttribute("role", "button");
     item.setAttribute("aria-label", `Receipts for: ${b.text.slice(0, 60)}`);
     const meta = el("div", { className: "meta" });
-    meta.append(el("span", {}, localTime(b.sent_at).replace(/^updated /, "")), el("span", {}, `${acked} of ${b.sessions.length} acknowledged`));
+    meta.append(el("span", {}, localTime(b.sent_at)), el("span", {}, `${acked} of ${b.sessions.length} acknowledged`));
     const who = el("div", { className: "who" });
     who.append(...b.sessions.map((s) => el("span", { className: `badge ${s.status}` }, `${s.name} · ${STATUS[s.status] || s.status}`)));
     item.append(meta, el("div", { className: "text" }, b.text), who);
@@ -269,14 +272,14 @@ function render() {
     tr.append(
       pickCell(e),
       el("td", {}, e.name),
-      el("td", {}, "").appendChild(el("span", { className: `badge ${e.kind}` }, e.kind)).parentNode,
+      el("td", {}, el("span", { className: `badge ${e.kind}` }, e.kind)),
       el("td", { className: "mono" }, e.type),
-      el("td", {}, "").appendChild(el("span", { className: `badge ${e.status}` }, e.status)).parentNode,
+      el("td", {}, el("span", { className: `badge ${e.status}` }, e.status)),
       el("td", { className: "mono" }, e.id),
       actions(e),
     );
     return tr;
-  }) : [Object.assign(el("tr"), { innerHTML: '<td class="empty" colspan="7">No endpoints match</td>' })]));
+  }) : [el("tr", {}, el("td", { className: "empty", colSpan: 7 }, "No endpoints match"))]));
 }
 
 // Theme: follows the OS until toggled; storage may be blocked in the sandboxed frame.

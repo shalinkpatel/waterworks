@@ -38,9 +38,6 @@ defmodule WwWeb.Socket do
 
   def handle_info(_message, state), do: {:ok, state}
 
-  @impl true
-  def terminate(_reason, _state), do: :ok
-
   defp command(%{"op" => "send"} = body, state) do
     {to, type, payload, opts} = Ww.Wire.send_args(body)
 
