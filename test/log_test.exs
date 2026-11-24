@@ -69,9 +69,114 @@ defmodule WwLogTest do
              entry.tables
 
     assert {:ok, %{rows: [[1, 2.5, true], [8, 3.0, nil]]}} =
-             Store.table_rows(reopened, "log_1", "results", 10)
+             Store.table_rows(reopened, "log_1", "results", limit: 10)
 
-    assert {:error, :unknown_table} = Store.table_rows(reopened, "log_1", "nope", 10)
+    assert {:error, :unknown_table} = Store.table_rows(reopened, "log_1", "nope", [])
+  end
+
+  test "CSV and Parquet tables load natively; revisions keep or replace tables", %{tmp_dir: dir} do
+    store = Store.open(dir)
+    author = %{"endpoint" => "ep_a", "name" => "pi-1"}
+    csv = "day,run,hit_rate,note\n2026-11-20,1,0.61,\"warm, cached\"\n2026-11-21,2,0.73,\n"
+
+    # Parquet produced by DuckDB itself, sent base64 like an agent would.
+    parquet = Path.join(dir, "in.parquet")
+    {:ok, db} = Duckdbex.open()
+    {:ok, conn} = Duckdbex.connection(db)
+
+    {:ok, _} =
+      Duckdbex.query(
+        conn,
+        "COPY (SELECT range AS i, range * 1.5 AS x FROM range(5)) TO '#{parquet}' (FORMAT parquet)"
+      )
+
+    {:ok, content} =
+      Entry.validate(%{
+        "title" => "files",
+        "tables" => [
+          %{"name" => "daily", "csv" => csv},
+          %{"name" => "series", "parquet" => Base.encode64(File.read!(parquet))}
+        ]
+      })
+
+    assert :ok = Store.create(store, "log_f", author, content, "2026-11-24T10:00:00Z")
+    [entry] = Store.load_all(store)
+
+    assert [%{name: "daily", row_count: 2, columns: daily}, %{name: "series", row_count: 5}] =
+             entry.tables
+
+    assert Enum.map(daily, & &1["type"]) == ~w(DATE BIGINT DOUBLE VARCHAR)
+
+    # Dates come back as text; sorting and paging use known columns only.
+    assert {:ok, %{rows: [["2026-11-21", 2, 0.73, nil]], total: 2}} =
+             Store.table_rows(store, "log_f", "daily", order_by: "run", desc: true, limit: 1)
+
+    # DECIMAL keeps its exact value as text.
+    assert {:ok, %{rows: [[1, "1.5"]], offset: 1}} =
+             Store.table_rows(store, "log_f", "series",
+               order_by: "i; DROP TABLE x",
+               limit: 1,
+               offset: 1
+             )
+
+    assert {:ok,
+            "day,run,hit_rate,note\r\n2026-11-20,1,0.61,\"warm, cached\"\r\n2026-11-21,2,0.73,\r\n"} =
+             Store.table_csv(store, "log_f", "daily", [])
+
+    # Keep one table, replace the other; a bad CSV is an error and changes nothing.
+    {:ok, changes} =
+      Entry.validate(
+        %{
+          "tables" => [
+            %{"name" => "daily", "keep" => true},
+            %{"name" => "fresh", "csv" => "a\n1\n"}
+          ]
+        },
+        partial: true
+      )
+
+    assert :ok =
+             Store.revise(
+               store,
+               "log_f",
+               changes,
+               "ep_a",
+               "revise",
+               "pending",
+               "2026-11-24T11:00:00Z"
+             )
+
+    assert Enum.map(Store.get(store, "log_f").tables, & &1.name) == ["daily", "fresh"]
+
+    {:ok, bad} =
+      Entry.validate(
+        %{"tables" => [%{"name" => "broken", "parquet" => Base.encode64("not parquet")}]},
+        partial: true
+      )
+
+    assert {:error, "could not read the parquet: " <> _} =
+             Store.revise(
+               store,
+               "log_f",
+               bad,
+               "ep_a",
+               "revise",
+               "pending",
+               "2026-11-24T12:00:00Z"
+             )
+
+    assert Store.get(store, "log_f").revision == 2
+
+    assert {:error, "there is no table nope to keep"} =
+             Store.revise(
+               store,
+               "log_f",
+               %{tables: [%{kind: :keep, name: "nope"}]},
+               "ep_a",
+               "revise",
+               "pending",
+               "t"
+             )
   end
 
   test "validation normalizes tags and links and rejects bad input" do

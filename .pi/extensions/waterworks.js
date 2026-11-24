@@ -1,7 +1,7 @@
 const baseUrl = (process.env.WW_URL || "http://127.0.0.1:7420").replace(/\/$/, "");
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 
 const acceptedTypes = ["demo.echo.v1", "canvas.comment.v1", "core.error.v1", "log.changes_requested.v1"];
 const canvasTypes = [
@@ -318,6 +318,20 @@ export default function waterworks(pi) {
     }
   }
 
+  // A table given as a local file is read here (the log may run on another machine): CSV goes
+  // as text, Parquet as base64, and the log has DuckDB read it.
+  async function tableFile(table, cwd) {
+    if (!table.file) return table;
+    const { file, ...rest } = table;
+    const path = resolve(cwd ?? process.cwd(), file);
+    if (!/\.(csv|parquet)$/i.test(path)) throw new Error(`${file}: tables can be .csv or .parquet files`);
+    const data = await readFile(path);
+    if (data.length > 12_000_000) throw new Error(`${file} is over 12 MB; send a smaller extract`);
+    const name = rest.name || basename(path).replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^[^a-z]+/, "t_");
+    if (/\.csv$/i.test(path)) return { ...rest, name, csv: data.toString("utf8") };
+    return { ...rest, name, parquet: data.toString("base64") };
+  }
+
   pi.registerTool({
     name: "ww_log",
     label: "Waterworks Log",
@@ -328,7 +342,7 @@ export default function waterworks(pi) {
       "action=tags lists the tags already in use with counts: prefer them over new ones.",
       "action=query {status?, tags?, mine?, limit?} lists entries. action=table {entry, table, limit?} reads a data table's rows.",
       "links: [{url, label?, kind?: pr|dashboard|other}] or plain URLs.",
-      "tables: [{name (snake_case), description?, columns: [name | {name, type: BIGINT|DOUBLE|VARCHAR|BOOLEAN}], rows: [[...]]}], stored in DuckDB (types inferred when omitted).",
+      "tables (stored in DuckDB): each is {name (snake_case), description?} plus one of: file: a local .csv (header row) or .parquet path, read here and typed by DuckDB (best for real results); columns: [name | {name, type: BIGINT|DOUBLE|VARCHAR|BOOLEAN}] with rows: [[...]]; or keep: true to carry a table over when revising with other table changes. Files up to ~12 MB.",
     ].join(" "),
     promptSnippet: "Log work items/results for the user's review (ww_log)",
     promptGuidelines: [
@@ -352,8 +366,9 @@ export default function waterworks(pi) {
       required: ["action"],
       additionalProperties: false,
     },
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const { action, ...payload } = params;
+      if (payload.tables) payload.tables = await Promise.all(payload.tables.map((t) => tableFile(t, ctx?.cwd)));
       const result = await logRequest(`log.${action}.v1`, payload);
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },

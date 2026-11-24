@@ -7,7 +7,11 @@ defmodule Ww.Log.Store do
 
   alias Exqlite.Sqlite3, as: Sql
 
-  defstruct [:sql, :duck, :duck_db]
+  defstruct [:dir, :sql, :duck, :duck_db]
+
+  @max_rows 100_000
+  # Column types returned as-is; anything else (dates, decimals, structs...) is read as text.
+  @json_types ~w(BOOLEAN TINYINT SMALLINT INTEGER BIGINT FLOAT REAL DOUBLE VARCHAR)
 
   @schema """
   CREATE TABLE IF NOT EXISTS entries (
@@ -66,21 +70,23 @@ defmodule Ww.Log.Store do
     :ok = Sql.execute(sql, @schema)
     {:ok, duck_db} = Duckdbex.open(Path.join(dir, "log.duckdb"))
     {:ok, duck} = Duckdbex.connection(duck_db)
-    %__MODULE__{sql: sql, duck: duck, duck_db: duck_db}
+    %__MODULE__{dir: dir, sql: sql, duck: duck, duck_db: duck_db}
   end
 
-  @doc "Creates an entry at revision 1, status pending."
+  @doc "Creates an entry at revision 1, status pending. `{:error, reason}` if a table is unreadable."
   def create(store, id, author, content, at) do
-    transaction(store, fn ->
-      exec(store, "INSERT INTO entries VALUES (?1, 'pending', 1, ?2, ?3, ?3)", [
-        id,
-        Jason.encode!(author),
-        at
-      ])
+    with {:ok, tables} <- load_tables(store, id, 1, content.tables, nil) do
+      transaction(store, fn ->
+        exec(store, "INSERT INTO entries VALUES (?1, 'pending', 1, ?2, ?3, ?3)", [
+          id,
+          Jason.encode!(author),
+          at
+        ])
 
-      insert_revision(store, id, 1, content, author_by(author), at)
-      review(store, id, 1, "submit", nil, at)
-    end)
+        insert_revision(store, id, 1, content, tables, author_by(author), at)
+        review(store, id, 1, "submit", nil, at)
+      end)
+    end
   end
 
   @doc """
@@ -93,32 +99,24 @@ defmodule Ww.Log.Store do
     next = revision + 1
     content = Map.merge(current, Map.take(changes, [:title, :body, :tags, :links]))
 
-    transaction(store, fn ->
-      insert_revision(
-        store,
-        id,
-        next,
-        Map.put(content, :tables, Map.get(changes, :tables)),
-        by,
-        at
-      )
+    # Without :tables, every current table is kept.
+    specs =
+      Map.get(changes, :tables) ||
+        Enum.map(current_tables(store, id, revision), &%{kind: :keep, name: &1})
 
-      unless Map.has_key?(changes, :tables) do
+    with {:ok, tables} <- load_tables(store, id, next, specs, revision) do
+      transaction(store, fn ->
+        insert_revision(store, id, next, content, tables, by, at)
+
         exec(
           store,
-          "INSERT INTO data_tables SELECT entry_id, ?3, name, description, duck_table, columns, row_count FROM data_tables WHERE entry_id = ?1 AND revision = ?2",
-          [id, revision, next]
+          "UPDATE entries SET revision = ?2, status = ?3, updated_at = ?4 WHERE id = ?1",
+          [id, next, status, at]
         )
-      end
 
-      exec(
-        store,
-        "UPDATE entries SET revision = ?2, status = ?3, updated_at = ?4 WHERE id = ?1",
-        [id, next, status, at]
-      )
-
-      review(store, id, next, action, nil, at)
-    end)
+        review(store, id, next, action, nil, at)
+      end)
+    end
   end
 
   @doc "Changes status only (approve, reject, request changes, reopen) and records why."
@@ -147,27 +145,189 @@ defmodule Ww.Log.Store do
 
   def get(store, id), do: store |> load(id) |> List.first()
 
-  @doc "Rows of one of an entry's current tables."
-  def table_rows(store, id, name, limit) do
-    case query(
-           store,
-           "SELECT t.duck_table, t.columns FROM data_tables t JOIN entries e ON e.id = t.entry_id AND e.revision = t.revision WHERE t.entry_id = ?1 AND t.name = ?2",
-           [id, name]
-         ) do
-      [[duck_table, columns]] ->
-        {:ok, result} =
-          Duckdbex.query(store.duck, "SELECT * FROM #{ident(duck_table)} LIMIT #{limit}")
+  @doc """
+  A page of one of an entry's current tables: `{:ok, %{columns, rows, total, offset}}`.
+  Options: limit, offset, order_by (a column name) and desc.
+  """
+  def table_rows(store, id, name, opts) do
+    with {:ok, duck_table, columns, total} <- current_table(store, id, name) do
+      limit = Keyword.get(opts, :limit, 100)
+      offset = Keyword.get(opts, :offset, 0)
 
-        {:ok, %{columns: Jason.decode!(columns), rows: Duckdbex.fetch_all(result)}}
+      sql =
+        "SELECT #{select_list(columns)} FROM #{ident(duck_table)}#{order(columns, opts)} LIMIT #{limit} OFFSET #{offset}"
 
-      [] ->
-        {:error, :unknown_table}
+      {:ok, result} = Duckdbex.query(store.duck, sql)
+      {:ok, %{columns: columns, rows: Duckdbex.fetch_all(result), total: total, offset: offset}}
     end
   end
 
-  # Data goes to DuckDB before the SQLite transaction commits; if that transaction then fails,
-  # the DuckDB table is orphaned (unreferenced), never half-referenced.
-  defp insert_revision(store, id, revision, content, by, at) do
+  @doc "A whole current table as CSV text (header row first), in the requested order."
+  def table_csv(store, id, name, opts) do
+    with {:ok, %{columns: columns, rows: rows}} <-
+           table_rows(store, id, name, Keyword.merge(opts, limit: @max_rows, offset: 0)) do
+      lines = [Enum.map(columns, & &1["name"]) | rows]
+
+      {:ok,
+       Enum.map_join(lines, "", fn row -> Enum.map_join(row, ",", &csv_field/1) <> "\r\n" end)}
+    end
+  end
+
+  defp csv_field(nil), do: ""
+
+  defp csv_field(v) when is_binary(v),
+    do: if(v =~ ~r/[",\r\n]/, do: ~s("#{String.replace(v, ~s("), ~s(""))}"), else: v)
+
+  defp csv_field(v), do: to_string(v)
+
+  defp current_table(store, id, name) do
+    case query(
+           store,
+           "SELECT t.duck_table, t.columns, t.row_count FROM data_tables t JOIN entries e ON e.id = t.entry_id AND e.revision = t.revision WHERE t.entry_id = ?1 AND t.name = ?2",
+           [id, name]
+         ) do
+      [[duck_table, columns, total]] -> {:ok, duck_table, Jason.decode!(columns), total}
+      [] -> {:error, :unknown_table}
+    end
+  end
+
+  defp current_tables(store, id, revision),
+    do:
+      for(
+        [name] <-
+          query(store, "SELECT name FROM data_tables WHERE entry_id = ?1 AND revision = ?2", [
+            id,
+            revision
+          ]),
+        do: name
+      )
+
+  defp select_list(columns) do
+    Enum.map_join(columns, ", ", fn %{"name" => n, "type" => t} ->
+      if t in @json_types, do: ident(n), else: "CAST(#{ident(n)} AS VARCHAR) AS #{ident(n)}"
+    end)
+  end
+
+  # Sorting only by a known column, so the name is never taken from the request as SQL.
+  defp order(columns, opts) do
+    case Enum.find(columns, &(&1["name"] == opts[:order_by])) do
+      nil ->
+        ""
+
+      %{"name" => n} ->
+        " ORDER BY #{ident(n)} #{if opts[:desc], do: "DESC", else: "ASC"} NULLS LAST"
+    end
+  end
+
+  # Tables load into DuckDB before the SQLite transaction, so an unreadable CSV is an answer
+  # to the sender rather than a rolled-back write. A later SQLite failure leaves an orphaned
+  # (unreferenced) DuckDB table, never a half-referenced one.
+  defp load_tables(store, id, revision, specs, previous) do
+    Enum.reduce_while(specs, {:ok, []}, fn spec, {:ok, acc} ->
+      case load_table(store, id, revision, spec, previous) do
+        {:ok, table} -> {:cont, {:ok, acc ++ [table]}}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp load_table(store, id, _revision, %{kind: :keep, name: name}, previous) do
+    case query(
+           store,
+           "SELECT description, duck_table, columns, row_count FROM data_tables WHERE entry_id = ?1 AND revision = ?2 AND name = ?3",
+           [id, previous, name]
+         ) do
+      [[description, duck_table, columns, rows]] ->
+        {:ok,
+         %{
+           name: name,
+           description: description,
+           duck_table: duck_table,
+           columns: Jason.decode!(columns),
+           row_count: rows
+         }}
+
+      [] ->
+        {:error, "there is no table #{name} to keep"}
+    end
+  end
+
+  defp load_table(store, id, revision, %{kind: :rows} = t, _previous) do
+    duck_table = duck_name(id, revision, t.name)
+    columns = Enum.map(t.columns, &%{"name" => &1.name, "type" => &1.type})
+    definition = Enum.map_join(columns, ", ", &"#{ident(&1["name"])} #{&1["type"]}")
+
+    {:ok, _} =
+      Duckdbex.query(store.duck, "CREATE OR REPLACE TABLE #{ident(duck_table)} (#{definition})")
+
+    {:ok, appender} = Duckdbex.appender(store.duck, duck_table)
+    :ok = Duckdbex.appender_add_rows(appender, t.rows)
+    :ok = Duckdbex.appender_close(appender)
+
+    {:ok,
+     %{
+       name: t.name,
+       description: t.description,
+       duck_table: duck_table,
+       columns: columns,
+       row_count: length(t.rows)
+     }}
+  end
+
+  # CSV and Parquet are written to a private temp file and read by DuckDB itself, which
+  # detects the column types (dates, decimals...).
+  defp load_table(store, id, revision, %{kind: kind} = t, _previous)
+       when kind in [:csv, :parquet] do
+    duck_table = duck_name(id, revision, t.name)
+    file = Path.join(store.dir, "ingest-#{System.unique_integer([:positive])}.#{kind}")
+    File.write!(file, t.data)
+    path = "'" <> String.replace(file, "'", "''") <> "'"
+
+    reader =
+      if kind == :csv, do: "read_csv(#{path}, header = true)", else: "read_parquet(#{path})"
+
+    try do
+      with {:ok, _} <-
+             Duckdbex.query(
+               store.duck,
+               "CREATE OR REPLACE TABLE #{ident(duck_table)} AS SELECT * FROM #{reader}"
+             ),
+           {:ok, described} <-
+             Duckdbex.query(
+               store.duck,
+               "SELECT column_name, column_type FROM (DESCRIBE #{ident(duck_table)})"
+             ),
+           {:ok, counted} <-
+             Duckdbex.query(store.duck, "SELECT count(*) FROM #{ident(duck_table)}") do
+        columns =
+          for [n, type] <- Duckdbex.fetch_all(described), do: %{"name" => n, "type" => type}
+
+        [[rows]] = Duckdbex.fetch_all(counted)
+
+        if rows > @max_rows do
+          Duckdbex.query(store.duck, "DROP TABLE #{ident(duck_table)}")
+          {:error, "tables hold at most #{@max_rows} rows"}
+        else
+          {:ok,
+           %{
+             name: t.name,
+             description: t.description,
+             duck_table: duck_table,
+             columns: columns,
+             row_count: rows
+           }}
+        end
+      else
+        {:error, reason} -> {:error, "could not read the #{kind}: #{reason}"}
+      end
+    after
+      File.rm(file)
+    end
+  end
+
+  defp duck_name(id, revision, name), do: "data_#{slug(id)}_r#{revision}_#{name}"
+
+  defp insert_revision(store, id, revision, content, tables, by, at) do
     exec(store, "INSERT INTO revisions VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", [
       id,
       revision,
@@ -179,25 +339,15 @@ defmodule Ww.Log.Store do
       at
     ])
 
-    for table <- content[:tables] || [] do
-      duck_table = "data_#{slug(id)}_r#{revision}_#{table.name}"
-      columns = Enum.map_join(table.columns, ", ", &"#{ident(&1.name)} #{&1.type}")
-
-      {:ok, _} =
-        Duckdbex.query(store.duck, "CREATE OR REPLACE TABLE #{ident(duck_table)} (#{columns})")
-
-      {:ok, appender} = Duckdbex.appender(store.duck, duck_table)
-      :ok = Duckdbex.appender_add_rows(appender, table.rows)
-      :ok = Duckdbex.appender_close(appender)
-
+    for t <- tables do
       exec(store, "INSERT INTO data_tables VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", [
         id,
         revision,
-        table.name,
-        table.description,
-        duck_table,
-        Jason.encode!(table.columns),
-        length(table.rows)
+        t.name,
+        t.description,
+        t.duck_table,
+        Jason.encode!(t.columns),
+        t.row_count
       ])
     end
   end

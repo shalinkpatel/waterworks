@@ -149,9 +149,10 @@ defmodule Ww.Log do
   end
 
   defp run_command(state, "log.submit.v1", payload, from, user?) do
-    with {:ok, content} <- Entry.validate(payload) do
-      id = Ww.random_id("log")
-      Store.create(state.store, id, author(state, from, user?), content, now())
+    id = Ww.random_id("log")
+
+    with {:ok, content} <- Entry.validate(payload),
+         :ok <- Store.create(state.store, id, author(state, from, user?), content, now()) do
       {:reply, "log.receipt.v1", %{entry: id, status: "pending"}, publish(state)}
     end
   end
@@ -168,17 +169,17 @@ defmodule Ww.Log do
              entry.status in ~w(pending changes_requested),
              "entry is #{entry.status}; it can no longer be revised"
            ),
-         {:ok, changes} <- Entry.validate(payload, partial: true) do
-      Store.revise(state.store, entry.id, changes, from, "revise", "pending", now())
+         {:ok, changes} <- Entry.validate(payload, partial: true),
+         :ok <- Store.revise(state.store, entry.id, changes, from, "revise", "pending", now()) do
       {:reply, "log.receipt.v1", %{entry: entry.id, status: "pending"}, publish(state)}
     end
   end
 
   defp run_command(state, "log.edit.v1", payload, _from, true) do
     with {:ok, entry} <- fetch(state, payload["entry"]),
-         {:ok, changes} <- Entry.validate(payload, partial: true) do
-      # Any edit by the user puts the entry back in the queue, approved ones included.
-      Store.revise(state.store, entry.id, changes, "user", "edit", "pending", now())
+         # Any edit by the user puts the entry back in the queue, approved ones included.
+         {:ok, changes} <- Entry.validate(payload, partial: true),
+         :ok <- Store.revise(state.store, entry.id, changes, "user", "edit", "pending", now()) do
       {:reply, "log.receipt.v1", %{entry: entry.id, status: "pending"}, publish(state)}
     end
   end
@@ -222,15 +223,38 @@ defmodule Ww.Log do
          _user?
        )
        when is_binary(entry) and is_binary(table) do
-    limit = limit(payload["limit"], 100, 1_000)
+    opts = [
+      limit: limit(payload["limit"], 100, 1_000),
+      offset:
+        if(is_integer(payload["offset"]) and payload["offset"] >= 0,
+          do: payload["offset"],
+          else: 0
+        ),
+      order_by: payload["order_by"],
+      desc: payload["desc"] == true
+    ]
 
-    case Store.table_rows(state.store, entry, table, limit) do
-      {:ok, data} ->
-        {:reply, "log.table_rows.v1",
-         Map.merge(data, %{entry: entry, table: table, revision: payload["revision"]}), state}
+    echo = %{
+      entry: entry,
+      table: table,
+      revision: payload["revision"],
+      order_by: payload["order_by"],
+      desc: opts[:desc]
+    }
 
-      {:error, :unknown_table} ->
-        {:error, "no table #{table} on #{entry}"}
+    # format: "csv" answers the whole table as CSV text (for downloads) instead of a page.
+    result =
+      if payload["format"] == "csv",
+        do:
+          with(
+            {:ok, csv} <- Store.table_csv(state.store, entry, table, opts),
+            do: {:ok, %{csv: csv}}
+          ),
+        else: Store.table_rows(state.store, entry, table, opts)
+
+    case result do
+      {:ok, data} -> {:reply, "log.table_rows.v1", Map.merge(data, echo), state}
+      {:error, :unknown_table} -> {:error, "no table #{table} on #{entry}"}
     end
   end
 

@@ -6,6 +6,8 @@ defmodule Ww.Log.Entry do
 
   @types ~w(BIGINT DOUBLE VARCHAR BOOLEAN)
   @max_rows 100_000
+  # A whole message is at most 16 MB; base64 Parquet is a third larger than the file.
+  @max_file 16_000_000
 
   @doc """
   `{:ok, content}` or `{:error, reason}`. With `partial: true` (revise, edit) only the fields
@@ -129,15 +131,50 @@ defmodule Ww.Log.Entry do
   defp tables(_), do: {:error, "tables must be a list of up to 10"}
 
   @doc """
-  A data table: `{name, description?, columns: [name | {name, type?}], rows: [[...]]}`. Types
-  are BIGINT, DOUBLE, VARCHAR or BOOLEAN; missing types are inferred from the values. Values
-  that fit no type (objects, lists) are stored as their JSON text in a VARCHAR column.
+  A data table, one of:
+
+    * `{name, description?, columns: [name | {name, type?}], rows: [[...]]}`: types are BIGINT,
+      DOUBLE, VARCHAR or BOOLEAN, inferred from the values when missing; values that fit no
+      type (objects, lists) are stored as their JSON text in a VARCHAR column.
+    * `{name, description?, csv: "text with a header row"}` or
+      `{name, description?, parquet: "<base64>"}`: read by DuckDB, which detects the types.
+    * `{name, keep: true}`: carry this table over from the previous revision (edits).
   """
-  def table(%{"name" => name, "columns" => columns, "rows" => rows} = t)
-      when is_binary(name) and is_list(columns) and is_list(rows) do
+  def table(%{"name" => name} = t) when is_binary(name) do
+    description =
+      if is_binary(t["description"]), do: String.slice(t["description"], 0, 500), else: ""
+
     with :ok <-
-           check(name =~ ~r/\A[a-z][a-z0-9_]{0,40}\z/, "table names look like latency_by_batch"),
-         {:ok, columns} <- columns(columns),
+           check(name =~ ~r/\A[a-z][a-z0-9_]{0,40}\z/, "table names look like latency_by_batch") do
+      case t do
+        %{"keep" => true} ->
+          {:ok, %{kind: :keep, name: name}}
+
+        %{"csv" => csv} when is_binary(csv) and byte_size(csv) in 1..@max_file ->
+          {:ok, %{kind: :csv, name: name, description: description, data: csv}}
+
+        %{"parquet" => b64} when is_binary(b64) and byte_size(b64) in 1..@max_file ->
+          case Base.decode64(b64, ignore: :whitespace) do
+            {:ok, data} ->
+              {:ok, %{kind: :parquet, name: name, description: description, data: data}}
+
+            :error ->
+              {:error, "parquet must be base64"}
+          end
+
+        %{"columns" => columns, "rows" => rows} when is_list(columns) and is_list(rows) ->
+          rows_table(name, description, columns, rows)
+
+        _ ->
+          {:error, "a table needs columns and rows, csv, parquet (base64), or keep"}
+      end
+    end
+  end
+
+  def table(_), do: {:error, "a table needs a name"}
+
+  defp rows_table(name, description, columns, rows) do
+    with {:ok, columns} <- columns(columns),
          :ok <- check(length(rows) <= @max_rows, "tables hold at most #{@max_rows} rows"),
          :ok <-
            check(
@@ -152,15 +189,10 @@ defmodule Ww.Log.Entry do
         end)
 
       with {:ok, rows} <- coerce_rows(rows, columns) do
-        description =
-          if is_binary(t["description"]), do: String.slice(t["description"], 0, 500), else: ""
-
-        {:ok, %{name: name, description: description, columns: columns, rows: rows}}
+        {:ok, %{kind: :rows, name: name, description: description, columns: columns, rows: rows}}
       end
     end
   end
-
-  def table(_), do: {:error, "a table needs name, columns and rows"}
 
   defp columns(list) when list != [] and length(list) <= 64 do
     columns =

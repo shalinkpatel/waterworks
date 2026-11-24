@@ -406,9 +406,13 @@ override): entries, every revision, reviews and table metadata in SQLite
 when `ww log` starts again.
 
 An entry has a title, a markdown body, tags, links (`{url, label?, kind: pr |
-dashboard | other}`) and optional data tables
-(`{name, description?, columns: [name | {name, type}], rows}`, types BIGINT,
-DOUBLE, VARCHAR or BOOLEAN, inferred when omitted). Statuses: `pending` →
+dashboard | other}`) and optional data tables, each `{name, description?}` plus
+one of: `csv` (text with a header row), `parquet` (base64), or `columns` + `rows`
+(types BIGINT, DOUBLE, VARCHAR or BOOLEAN, inferred when omitted). DuckDB reads
+CSV and Parquet itself and detects their column types; `{name, keep: true}`
+carries a table over when a revision changes the table set. The `ww_log` tool
+also takes `file: "results.parquet"` (or `.csv`) and reads it where the agent
+runs. Statuses: `pending` →
 `approved` / `rejected` / `changes_requested` (back to `pending` when revised).
 Any edit you make, approved entries included, puts the entry back in the queue.
 
@@ -418,7 +422,7 @@ Any edit you make, approved entries included, puts the entry back in the queue.
 | `log.revise.v1 {entry, …changes}` | the submitting endpoint, while pending or changes requested | `log.receipt.v1` |
 | `log.tags.v1 {}` | anyone | `log.tag_list.v1 {tags: [{name, count}]}` |
 | `log.query.v1 {status?, tags?, mine?, limit?}` | anyone | `log.entries.v1 {entries}` |
-| `log.table.v1 {entry, table, limit?}` | anyone | `log.table_rows.v1 {columns, rows}` |
+| `log.table.v1 {entry, table, limit?, offset?, order_by?, desc?, format?}` | anyone | `log.table_rows.v1 {columns, rows, total, offset}`, or `{csv}` with `format: "csv"` |
 | `log.review.v1 {entry, action, note?}` | the log view | approve, reject, request_changes, reopen |
 | `log.edit.v1 {entry, …changes}` | the log view | new revision, back to pending |
 
@@ -429,7 +433,10 @@ the entry is marked so you can edit and approve it yourself. Errors answer
 
 The view has a calendar (click a day for that day's entries, in your time zone),
 tag filters, Queue / Changes requested / Approved / Rejected / All tabs, and an
-entry modal with links, table previews and history. `ww log page` prints it as a
+entry modal with links and history. Tables open in a viewer with pages of 100
+rows, sorting by any column, and CSV download (downloads may be blocked inside a
+canvas; the standalone view allows them). New and Edit take tables too: paste
+CSV or choose a CSV or Parquet file. `ww log page` prints it as a
 single page to publish into a canvas; a subscribed canvas can review and edit
 like the view.
 

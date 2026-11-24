@@ -15,7 +15,6 @@ let month = new Date(); month.setDate(1);
 const tagFilter = new Set();
 let openEntry = null; // id shown in the entry modal
 let editing = null; // entry id being edited, or "new"
-const previews = new Map(); // "entry/table" -> {columns, rows}
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...children) => {
@@ -45,10 +44,7 @@ function send(type, payload) {
 
 function receive(type, payload) {
   if (type === "log.state.v1") return apply(payload);
-  if (type === "log.table_rows.v1") {
-    previews.set(`${payload.entry}/${payload.revision}/${payload.table}`, payload);
-    return renderEntry();
-  }
+  if (type === "log.table_rows.v1") return payload.csv != null ? download(payload) : tablePage(payload);
   // The form stays open until the log accepts the save, so a rejected one keeps your text.
   if (type === "log.receipt.v1" && saving) { saving = false; return $("form").close(); }
   if (type === "core.error.v1") { saving = false; return toast(payload.error); }
@@ -211,17 +207,81 @@ function section(title, ...content) {
 }
 
 function tableView(e, t) {
-  const preview = previews.get(`${e.id}/${e.revision}/${t.name}`);
   const summary = el("div", { className: "hint" }, `${t.description ? t.description + " · " : ""}${t.row_count} rows · ` +
     t.columns.map((c) => `${c.name} ${c.type}`).join(", "));
-  if (!preview) {
-    const b = el("button", { className: "ghost", type: "button", style: "margin-top:8px" }, "Preview rows");
-    b.onclick = () => send("log.table.v1", { entry: e.id, table: t.name, limit: 100, revision: e.revision });
-    return el("div", {}, summary, b);
-  }
-  return el("div", {}, summary, el("table", { className: "data" },
-    el("thead", {}, el("tr", {}, ...preview.columns.map((c) => el("th", {}, c.name)))),
-    el("tbody", {}, ...preview.rows.map((r) => el("tr", {}, ...r.map((v) => el("td", {}, v == null ? "∅" : String(v))))))));
+  const open = el("button", { className: "ghost", type: "button", style: "margin-top:8px" }, "Open table");
+  open.onclick = () => openTable(e, t);
+  return el("div", {}, summary, open);
+}
+
+// --- table viewer: pages of 100 rows, sorted by any column, downloadable as CSV ----------
+
+const PAGE = 100;
+let viewing = null; // {entry, revision, table, columns, total, offset, order_by, desc, rows}
+
+function openTable(e, t) {
+  viewing = { entry: e.id, revision: e.revision, table: t.name, description: t.description, columns: t.columns, total: t.row_count, offset: 0, order_by: null, desc: false, rows: null };
+  requestPage();
+  renderTable();
+  $("table").showModal();
+}
+
+function requestPage(extra = {}) {
+  const { entry, revision, table, offset, order_by, desc } = viewing;
+  send("log.table.v1", { entry, table, revision, limit: PAGE, offset, ...(order_by ? { order_by, desc } : {}), ...extra });
+}
+
+function tablePage(page) {
+  // Only the page the viewer is waiting for: a slow answer to an older click is dropped.
+  if (!viewing || page.entry !== viewing.entry || page.table !== viewing.table || page.offset !== viewing.offset ||
+      (page.order_by || null) !== viewing.order_by || Boolean(page.desc) !== viewing.desc) return;
+  viewing.rows = page.rows;
+  viewing.total = page.total;
+  renderTable();
+}
+
+function renderTable() {
+  const v = viewing;
+  $("table-title").textContent = v.table;
+  $("table-sub").textContent = `${v.total} rows${v.description ? " · " + v.description : ""}`;
+  const head = el("tr", {}, ...v.columns.map((c) => {
+    const th = el("th", { tabIndex: 0, title: "Sort" }, c.name, el("span", { className: "type" }, c.type));
+    if (v.order_by === c.name) th.setAttribute("aria-sort", v.desc ? "descending" : "ascending");
+    th.onclick = th.onkeydown = (ev) => {
+      if (ev.type === "keydown" && ev.key !== "Enter") return;
+      // none -> ascending -> descending -> none
+      if (v.order_by !== c.name) Object.assign(v, { order_by: c.name, desc: false });
+      else if (!v.desc) v.desc = true;
+      else Object.assign(v, { order_by: null, desc: false });
+      Object.assign(v, { offset: 0, rows: null });
+      requestPage();
+      renderTable();
+    };
+    return th;
+  }));
+  const body = v.rows
+    ? v.rows.map((r) => el("tr", {}, ...r.map((x) => el("td", {}, x == null ? "∅" : String(x)))))
+    : [el("tr", {}, el("td", { colSpan: v.columns.length, className: "hint" }, "Loading…"))];
+  $("table-grid").replaceChildren(el("thead", {}, head), el("tbody", {}, ...body));
+  const last = Math.min(v.offset + PAGE, v.total);
+  $("table-range").textContent = v.total ? `rows ${v.offset + 1}–${last} of ${v.total}` : "no rows";
+  $("table-prev").disabled = v.offset === 0;
+  $("table-next").disabled = last >= v.total;
+}
+
+const turn = (delta) => { Object.assign(viewing, { offset: Math.max(0, viewing.offset + delta), rows: null }); requestPage(); renderTable(); };
+$("table-prev").onclick = () => turn(-PAGE);
+$("table-next").onclick = () => turn(PAGE);
+$("table-close").onclick = () => { viewing = null; $("table").close(); };
+$("table-csv").onclick = () => requestPage({ format: "csv" });
+
+// Downloads may be blocked inside a canvas (sandboxed frame); the standalone view allows them.
+function download({ table, csv }) {
+  const a = el("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })), download: `${table}.csv` });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
 }
 
 function history(e) {
@@ -267,6 +327,10 @@ function openForm(e) {
   $("f-body").value = e?.body || "";
   $("f-tags").value = (e?.tags || []).join(", ");
   $("f-links").value = (e?.links || []).map(linkLine).join("\n");
+  formTables = (e?.tables || []).map((t) => ({ name: t.name, keep: true, label: `${t.row_count} rows` }));
+  tablesChanged = false;
+  renderFormTables();
+  $("f-add").open = false;
   $("f-hint").textContent = e
     ? (e.status === "approved" || e.status === "rejected" ? "Saving puts this entry back in the queue." : "Saving creates a new revision; the entry stays in the queue.")
     : "Your entries go into the queue like everyone else's.";
@@ -287,6 +351,45 @@ function parseLink(line) {
 }
 
 let saving = false;
+
+// --- tables in the form: keep or remove existing ones, add CSV (pasted or file) or Parquet --
+
+let formTables = []; // {name, keep: true, label} | {name, description, csv | parquet, label}
+let tablesChanged = false;
+
+function renderFormTables() {
+  $("f-tables").replaceChildren(el("div", { className: "tablelist" }, ...(formTables.length
+    ? formTables.map((t, i) => {
+      const remove = el("button", { className: "ghost", type: "button" }, "Remove");
+      remove.onclick = () => { formTables.splice(i, 1); tablesChanged = true; renderFormTables(); };
+      return el("div", { className: "t" }, el("span", { className: "badge tag" }, t.name), el("span", { className: "hint" }, t.label), remove);
+    })
+    : [el("span", { className: "hint" }, "No tables")])));
+}
+
+$("t-add").onclick = async () => {
+  const name = $("t-name").value.trim();
+  const file = $("t-file").files[0];
+  const csv = $("t-csv").value;
+  if (!/^[a-z][a-z0-9_]{0,40}$/.test(name)) return toast("Table names look like latency_by_batch");
+  if (formTables.some((t) => t.name === name)) return toast(`There is already a table named ${name}`);
+  if (!file && !csv.trim()) return toast("Paste CSV or choose a .csv or .parquet file");
+  const spec = { name, description: $("t-desc").value.trim() };
+  if (file && /\.parquet$/i.test(file.name)) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    Object.assign(spec, { parquet: btoa(binary), label: file.name });
+  } else if (file) {
+    Object.assign(spec, { csv: await file.text(), label: file.name });
+  } else {
+    Object.assign(spec, { csv, label: `pasted CSV, ${csv.trim().split("\n").length - 1} rows` });
+  }
+  formTables.push(spec);
+  tablesChanged = true;
+  for (const id of ["t-name", "t-desc", "t-csv", "t-file"]) $(id).value = "";
+  renderFormTables();
+};
 $("f-cancel").onclick = () => { saving = false; $("form").close(); };
 $("f-save").onclick = () => {
   const text = { title: $("f-title").value, body: $("f-body").value, tags: $("f-tags").value, links: $("f-links").value };
@@ -297,13 +400,16 @@ $("f-save").onclick = () => {
     links: (v) => v.split("\n").map((l) => l.trim()).filter(Boolean).map(parseLink),
   };
   const fields = Object.fromEntries(Object.entries(text).map(([k, v]) => [k, parse[k](v)]));
+  const tables = formTables.map(({ label, ...spec }) => spec);
   saving = true;
-  if (editing === "new") return send("log.submit.v1", fields);
+  if (editing === "new") return send("log.submit.v1", { ...fields, tables });
   // Send only fields whose text changed, so an edit never overwrites what the author revised
   // meanwhile, and untouched links keep their kind.
   const e = entries.find((x) => x.id === editing);
   const before = { title: e.title, body: e.body, tags: e.tags.join(", "), links: e.links.map(linkLine).join("\n") };
   const changed = Object.fromEntries(Object.keys(text).filter((k) => text[k].trim() !== before[k].trim()).map((k) => [k, fields[k]]));
+  // Tables go as a whole set: existing ones as {name, keep: true}, new ones with their data.
+  if (tablesChanged) changed.tables = tables;
   if (!Object.keys(changed).length) { saving = false; return $("form").close(); }
   send("log.edit.v1", { entry: editing, ...changed });
 };

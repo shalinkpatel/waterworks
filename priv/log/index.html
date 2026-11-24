@@ -76,6 +76,7 @@
   header .primary { background: var(--live); color: #00120b; align-self: center; }
   .ghost { border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; background: transparent; color: var(--text); cursor: pointer; }
   .danger { border: 1px solid var(--no); color: var(--no); }
+  .ghost:disabled { opacity: .4; cursor: default; }
   dialog { border: 1px solid var(--border); border-radius: 14px; padding: 0; width: min(860px, 94vw); background: var(--surface); color: var(--text); box-shadow: 0 24px 60px rgba(0,0,0,.45); }
   dialog::backdrop { background: rgba(0, 18, 11, .55); }
   dialog .dh { background: var(--header); color: #fff; padding: 16px 20px; display: flex; gap: 10px; align-items: center; }
@@ -97,6 +98,19 @@
   .form input, .form textarea { width: 100%; }
   .form textarea { min-height: 140px; resize: vertical; font-family: "IBM Plex Mono", monospace; }
   .hint { font-size: 12px; color: var(--faint); }
+  dialog.wide { width: min(1200px, 96vw); }
+  dialog .dh .sub { font: 12px "IBM Plex Mono", monospace; color: #869089; }
+  table.data.full { max-height: none; display: table; width: 100%; }
+  table.data.full th { cursor: pointer; user-select: none; position: sticky; top: 0; }
+  table.data th[aria-sort="ascending"]::after { content: " ▲"; color: var(--accent); }
+  table.data th[aria-sort="descending"]::after { content: " ▼"; color: var(--accent); }
+  table.data th .type { color: var(--faint); font-weight: 400; margin-left: 4px; }
+  .tablelist { display: flex; flex-direction: column; gap: 6px; }
+  .tablelist .t { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+  .addtable { margin-top: 8px; border: 1px dashed var(--border); border-radius: 10px; padding: 8px 10px; }
+  .addtable summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+  .addtable .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  .addtable .row input[type=text] { flex: 1; }
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--no-bg); color: var(--no); border: 1px solid var(--no); border-radius: 10px; padding: 8px 14px; }
 </style>
 </head>
@@ -136,10 +150,29 @@
     <label for="f-title">Title</label><input id="f-title" type="text" maxlength="200">
     <label for="f-body">Body (markdown)</label><textarea id="f-body"></textarea>
     <label for="f-tags">Tags (comma separated)</label><input id="f-tags" type="text" placeholder="kv-cache, bench">
-    <label for="f-links">Links (one per line: url, or label | url)</label><textarea id="f-links" style="min-height:70px"></textarea>
+    <label for="f-links">Links (one per line: url, label | url, or label | url | pr/dashboard/other)</label><textarea id="f-links" style="min-height:70px"></textarea>
+    <label>Tables</label>
+    <div id="f-tables"></div>
+    <details class="addtable" id="f-add">
+      <summary>Add a table</summary>
+      <div class="row"><input id="t-name" type="text" placeholder="name, e.g. latency_by_batch" aria-label="Table name"><input id="t-desc" type="text" placeholder="description (optional)" aria-label="Table description"></div>
+      <textarea id="t-csv" placeholder="Paste CSV here, header row first" aria-label="Table CSV" style="min-height:90px"></textarea>
+      <div class="row"><span class="hint">or a file:</span><input id="t-file" type="file" accept=".csv,.parquet" aria-label="CSV or Parquet file"><button class="ghost" type="button" id="t-add">Add table</button></div>
+    </details>
     <p class="hint" id="f-hint"></p>
   </div>
   <div class="df"><button class="ghost" type="button" id="f-cancel">Cancel</button><button class="primary" type="button" id="f-save">Save</button></div>
+</dialog>
+<dialog id="table" aria-labelledby="table-title" class="wide">
+  <div class="dh"><h3 id="table-title"></h3><span class="sub" id="table-sub"></span></div>
+  <div class="db"><table class="data full" id="table-grid"></table></div>
+  <div class="df">
+    <button class="ghost left" type="button" id="table-close">Close</button>
+    <span class="hint" id="table-range"></span>
+    <button class="ghost" type="button" id="table-prev" aria-label="Previous page">‹ Prev</button>
+    <button class="ghost" type="button" id="table-next" aria-label="Next page">Next ›</button>
+    <button class="primary" type="button" id="table-csv">Download CSV</button>
+  </div>
 </dialog>
 <div id="toast" role="status" hidden></div>
 <script src="/log/app.js"></script>
