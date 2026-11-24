@@ -213,7 +213,8 @@ defmodule Ww.CLI do
         "canvas.patch.v1",
         "canvas.data.v1",
         "canvas.reply.v1",
-        "canvas.clear.v1"
+        "canvas.clear.v1",
+        "core.shutdown.v1"
       ],
       emits: ["canvas.comment.v1", "canvas.action.v1", "core.error.v1"],
       metadata: %{tool: "canvas"}

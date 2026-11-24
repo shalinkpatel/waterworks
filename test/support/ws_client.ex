@@ -57,6 +57,28 @@ defmodule Ww.TestWS do
 
   def close(state), do: Mint.HTTP.close(state.conn)
 
+  @doc "Waits for the server's close frame and returns {code, reason}."
+  def receive_close(state, timeout \\ 2_000) do
+    receive do
+      message ->
+        case Mint.WebSocket.stream(state.conn, message) do
+          {:ok, conn, responses} ->
+            data = for {:data, ref, data} <- responses, ref == state.ref, into: "", do: data
+            {:ok, websocket, frames} = Mint.WebSocket.decode(state.websocket, data)
+
+            case for({:close, code, reason} <- frames, do: {code, reason}) do
+              [close | _] -> close
+              [] -> receive_close(%{state | conn: conn, websocket: websocket}, timeout)
+            end
+
+          _ ->
+            receive_close(state, timeout)
+        end
+    after
+      timeout -> :timeout
+    end
+  end
+
   defp await_upgrade(conn, ref, acc) do
     receive do
       message ->

@@ -15,11 +15,12 @@ function apply(state) {
   render();
 }
 
-function requestRemoval(id) {
+// action is "remove" (offline), "disconnect" or "shutdown" (online); the fleet re-checks all of it.
+function requestAction(action, id) {
   if (socket) {
-    socket.send(JSON.stringify({ op: "send", to: fleetId, type: "fleet.remove.v1", payload: { id } }));
+    socket.send(JSON.stringify({ op: "send", to: fleetId, type: `fleet.${action}.v1`, payload: { id } }));
   } else {
-    window.waterworks?.action({ to: fleetId, action: "remove", id });
+    window.waterworks?.action({ to: fleetId, action, id });
   }
 }
 
@@ -58,25 +59,35 @@ function chips() {
   }
 }
 
-// Offline endpoints only; the first click arms, the second (within 3 s) sends the removal to
-// `ww fleet`, which deletes the endpoint and its messages and refreshes the list.
-const removing = new Set();
-function removeButton(e) {
-  if (e.status !== "offline") return el("span");
-  const b = el("button", { className: "remove", type: "button" }, removing.has(e.id) ? "Removing…" : "Remove");
-  b.disabled = removing.has(e.id);
-  b.setAttribute("aria-label", `Remove ${e.name}`);
+// Offline rows: Remove. Online rows: Shut down (asks the endpoint to stop via core.shutdown.v1)
+// and Disconnect (deregisters it now). The first click arms, the second (within 3 s) sends.
+const ACTIONS = { remove: ["Remove", "Removing…"], shutdown: ["Shut down", "Asked to stop"], disconnect: ["Disconnect", "Disconnecting…"] };
+const pending = new Set();
+function actionButton(e, action) {
+  const [label, busy] = ACTIONS[action];
+  const key = `${action}:${e.id}`;
+  const b = el("button", { className: "remove", type: "button" }, pending.has(key) ? busy : label);
+  b.disabled = pending.has(key);
+  b.setAttribute("aria-label", `${label} ${e.name}`);
   b.onclick = () => {
     if (!b.classList.contains("armed")) {
-      b.classList.add("armed"); b.textContent = "Confirm remove";
-      setTimeout(() => { if (b.isConnected && !b.disabled) { b.classList.remove("armed"); b.textContent = "Remove"; } }, 3000);
+      b.classList.add("armed"); b.textContent = `Confirm ${label.toLowerCase()}`;
+      setTimeout(() => { if (b.isConnected && !b.disabled) { b.classList.remove("armed"); b.textContent = label; } }, 3000);
       return;
     }
-    removing.add(e.id);
-    requestRemoval(e.id);
+    pending.add(key);
+    requestAction(action, e.id);
     render();
   };
   return b;
+}
+
+function actions(e) {
+  const cell = el("td", { className: "actions" });
+  // The fleet can be shut down from its own view, but not disconnected or removed.
+  const list = e.status === "offline" ? ["remove"] : e.id === fleetId ? ["shutdown"] : ["shutdown", "disconnect"];
+  cell.append(...list.map((action) => actionButton(e, action)));
+  return cell;
 }
 
 function render() {
@@ -105,7 +116,7 @@ function render() {
       el("td", {}, "").appendChild(el("span", { className: `badge ${e.status}` }, e.status)).parentNode,
       el("td", { className: "mono" }, e.id),
       el("td", { className: "mono" }, e.cwd || "—"),
-      el("td", {}, "").appendChild(removeButton(e)).parentNode,
+      actions(e),
     );
     return tr;
   }) : [Object.assign(el("tr"), { innerHTML: '<td class="empty" colspan="7">No endpoints match</td>' })]));
@@ -131,6 +142,13 @@ addEventListener("waterworks", (e) => apply(e.detail));
 const params = new URLSearchParams(location.hash.slice(1));
 if (params.get("endpoint") && params.get("token")) {
   fleetId = params.get("fleet");
+  let stopped = false;
+  const stop = (reason) => {
+    stopped = true;
+    socket?.close();
+    updated = `${reason}; restart \`ww fleet\` to reopen`;
+    render();
+  };
   const connect = () => {
     const url = `${location.origin.replace(/^http/, "ws")}/v1/endpoints/${params.get("endpoint")}/socket`;
     const ws = new WebSocket(url, ["ww", `ww-token.${params.get("token")}`]);
@@ -142,11 +160,14 @@ if (params.get("endpoint") && params.get("token")) {
     ws.onmessage = ({ data }) => {
       const frame = JSON.parse(data);
       if (frame.op !== "message") return;
-      if (frame.message.type === "fleet.state.v1") apply(frame.message.payload);
       ws.send(JSON.stringify({ op: "ack", id: frame.message.id }));
+      if (frame.message.type === "fleet.state.v1") apply(frame.message.payload);
+      if (frame.message.type === "core.shutdown.v1") stop("shut down");
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       socket = null;
+      if (stopped) return;
+      if (event.reason === "deregistered") return stop("this view was disconnected");
       updated = "disconnected; retrying";
       render();
       setTimeout(connect, 2000);

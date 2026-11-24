@@ -51,6 +51,8 @@
             font: 500 12px Inter, sans-serif; cursor: pointer; }
   .remove:hover, .remove.armed { border-color: #dd403a; color: #dd403a; }
   .remove:disabled { opacity: .5; cursor: default; }
+  td.actions { white-space: nowrap; }
+  td.actions .remove + .remove { margin-left: 6px; }
   td.mono { font: 12px "IBM Plex Mono", monospace; color: var(--muted); }
   .badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; }
   .online { background: var(--online-bg); color: var(--online); }
