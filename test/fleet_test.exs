@@ -144,6 +144,44 @@ defmodule WwFleetTest do
     assert run.("fleet.remove_offline.v1", "ep_agent", %{}) == :ignore
   end
 
+  test "broadcast: only from the fleet's own view, only to online agents, non-empty text" do
+    endpoints = [
+      %{"id" => "ep_pi", "kind" => "agent", "online" => true},
+      %{"id" => "ep_pi_off", "kind" => "agent", "online" => false},
+      %{"id" => "ep_tool", "kind" => "tool", "online" => true}
+    ]
+
+    subs = %{"ep_view" => "fleet.state.v1", "ep_canvas" => "canvas.data.v1"}
+
+    run = fn type, from, payload ->
+      Fleet.command(
+        %{"type" => type, "from" => from, "payload" => payload},
+        subs,
+        endpoints,
+        "ep_fleet",
+        "ep_view"
+      )
+    end
+
+    ids = ["ep_pi", "ep_pi_off", "ep_tool", "ep_missing", "ep_pi"]
+
+    assert run.("fleet.broadcast.v1", "ep_view", %{"ids" => ids, "text" => "hi"}) ==
+             {:broadcast, ["ep_pi"], "hi"}
+
+    assert run.("fleet.broadcast.v1", "ep_canvas", %{"ids" => ids, "text" => "hi"}) == :ignore
+
+    assert run.("canvas.action.v1", "ep_canvas", %{
+             "action" => "broadcast",
+             "ids" => ids,
+             "text" => "hi"
+           }) == :ignore
+
+    assert run.("fleet.broadcast.v1", "ep_view", %{"ids" => ids, "text" => "  "}) == :ignore
+
+    assert run.("fleet.broadcast.v1", "ep_view", %{"ids" => ["ep_tool"], "text" => "hi"}) ==
+             :ignore
+  end
+
   test "the canvas page inlines the view script" do
     page = Fleet.canvas_page()
     refute page =~ ~s(src="/fleet/app.js")

@@ -144,6 +144,15 @@ defmodule Ww.Store do
     end
   end
 
+  @doc "One message and its delivery status (:pending or :acked), or nil."
+  def get_message(id) do
+    # Transactional so a node sees an ack just committed elsewhere in the cluster.
+    case :mnesia.transaction(fn -> :mnesia.read(:ww_messages, id) end) do
+      {:atomic, [record]} -> {to_message(record), elem(record, 9)}
+      _ -> nil
+    end
+  end
+
   def pending(to), do: messages_for(to, :pending)
   def history(to), do: messages_for(to, :all)
 

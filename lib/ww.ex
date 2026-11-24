@@ -89,6 +89,18 @@ defmodule Ww do
     with :ok <- authenticate(id, token), do: acknowledge_as(id, message_id)
   end
 
+  @doc "A message and its status (pending/acked), readable by its sender or recipient."
+  def message_status(id, token, message_id) do
+    with :ok <- authenticate(id, token),
+         {%Ww.Message{} = message, status} when id in [message.from, message.to] <-
+           Store.get_message(message_id) || {:error, :not_found} do
+      {:ok, message, status}
+    else
+      {:error, _} = error -> error
+      _ -> {:error, :not_found}
+    end
+  end
+
   def history(id, token) do
     with :ok <- authenticate(id, token), do: {:ok, Store.history(id)}
   end

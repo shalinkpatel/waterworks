@@ -30,6 +30,8 @@ function lineDelta(oldHtml, newHtml) {
   ].filter((op) => (op.insert ? op.insert.length : op.keep ?? op.drop) > 0);
 }
 const hints = {
+  "agent.prompt.v1":
+    "The user broadcast this to selected agent sessions from the Waterworks fleet view (it is relayed by the fleet endpoint). payload.text is the user's message: handle it as a request from the user. No reply message is needed unless the text asks for one.",
   "core.error.v1":
     "An endpoint rejected a message you sent (payload.error). For delta_base_mismatch, republish the canvas; ww_canvas_publish will send the full page.",
   "canvas.comment.v1":
