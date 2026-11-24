@@ -329,6 +329,13 @@ addressed them with `dashboard.clear.v1 {comments: [ids]}` or `{all: true}`
 by agent". A reload rebuilds the page, clears included, from the endpoint's
 mailbox history.
 
+### Fleet dashboard
+
+`scripts/fleet.sh` registers a dashboard and keeps it showing every registered
+agent and tool (online first, with counts). It needs `WW_ADMIN_TOKEN`, prints
+and opens the dashboard URL, and re-renders only when the fleet changes. Each
+run registers one more endpoint, since endpoints cannot be deregistered yet.
+
 ## Tests
 
 ```sh
