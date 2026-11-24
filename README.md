@@ -341,7 +341,8 @@ into the page), otherwise to the endpoint that last rendered the page. Like comm
 
 `ww fleet` is a tool endpoint (`metadata.tool: "fleet"`) that tracks every
 registered agent and tool and streams the list to subscribers whenever it
-changes (polled every `--interval` seconds, default 2). It needs
+changes (polled every `--interval` seconds, default 2). It holds a streaming tail
+of its own mailbox, so it shows as online and acts on requests immediately. It needs
 `WW_ADMIN_TOKEN` and owns no canvas.
 
 - **Standalone view:** it registers a viewer endpoint and opens
@@ -358,11 +359,19 @@ changes (polled every `--interval` seconds, default 2). It needs
   ```
 
 Messages: `fleet.subscribe.v1 {to?}` (yourself, or a canvas), `fleet.unsubscribe.v1
-{to?}`, and `fleet.remove.v1 {id}` (or `canvas.action.v1 {action: "remove", id}`
-from a subscribed canvas). Subscribers receive `fleet.state.v1` (canvases:
+{to?}`, and, from subscribers only, `fleet.remove.v1 {id}` (offline endpoints),
+`fleet.disconnect.v1 {id}` (online: deregisters it and closes its socket), and
+`fleet.shutdown.v1 {id}` (online: sends it `core.shutdown.v1`). A subscribed canvas
+sends the same as `canvas.action.v1 {action, id}`. Subscribers receive `fleet.state.v1` (canvases:
 `canvas.data.v1`) with `{fleet, endpoints: [{name, kind, type, status, id, cwd}],
-updated}`. Offline rows have a Remove button (click twice to confirm); the fleet
-removes only endpoints that exist and are offline, and only for subscribers.
+updated}`. Offline rows have Remove; online rows have Shut down and Disconnect (click twice
+to confirm). Shutting the fleet down from its own row (or sending it
+`core.shutdown.v1`) deregisters the fleet and its viewer and exits.
+
+`core.shutdown.v1` asks an endpoint to stop; each decides what that means. A Pi
+session never exits for a remote message: it deregisters itself and leaves the
+fleet (`/reload` rejoins). A canvas deregisters itself and shows "closed". Clients
+closed with reason `deregistered` (Disconnect) stop reconnecting.
 
 The Type column reads `metadata.harness` for agents (the Pi adapter sets `pi`)
 and `metadata.tool` for tools (canvases set `canvas`); register your own with

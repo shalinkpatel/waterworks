@@ -9,9 +9,10 @@ const canvasTypes = [
   "canvas.clear.v1",
 ];
 // Last page published per canvas: the base the next delta is computed against.
-const published = new Map();
+const published = (globalThis.__waterworksPublished ||= new Map());
 // Canvases this session opened or published to; only their comments reach the model.
-const canvases = new Set();
+// Kept on globalThis, like the endpoint, so /reload does not orphan canvases this session owns.
+const canvases = (globalThis.__waterworksCanvases ||= new Set());
 
 // One hunk between the common prefix and suffix of lines; ops as in canvas.delta.v1.
 function lineDelta(oldHtml, newHtml) {
@@ -96,8 +97,26 @@ export default function waterworks(pi) {
     ui?.setStatus("waterworks", `online: ${endpoint.id}${queued}`);
   }
 
+  // Removed from the fleet (Disconnect, or after a shutdown request): stop reconnecting and
+  // forget the endpoint, so the next /reload registers a fresh one.
+  function deregistered(reason) {
+    for (const [file, cached] of endpointCache) if (cached === endpoint) endpointCache.delete(file);
+    active = false;
+    socket = undefined;
+    ui?.setStatus("waterworks", `disconnected: ${reason}`);
+    ui?.notify(`Waterworks: ${reason}; /reload to rejoin`, "warning");
+  }
+
   async function handleMessage(message) {
     if (!active) return;
+    // core.shutdown.v1 asks an endpoint to stop. A Pi session never exits for a remote message;
+    // it leaves the fleet instead (deregisters itself), and the user keeps working.
+    if (message.type === "core.shutdown.v1") {
+      await acknowledge(message.id);
+      await request("DELETE", `/v1/endpoints/${endpoint.id}`, undefined, endpointHeaders(endpoint)).catch(() => {});
+      deregistered(`shutdown requested by ${message.from}`);
+      return;
+    }
     // A rejected delta means our base is stale: the next publish must send the full page.
     if (message.type === "core.error.v1" && message.payload?.error === "delta_base_mismatch") {
       published.delete(message.from);
@@ -153,8 +172,9 @@ export default function waterworks(pi) {
         .catch((error) => console.error(`[waterworks] ${error.message}`));
     };
 
-    current.onclose = () => {
+    current.onclose = (event) => {
       if (socket !== current || !active) return;
+      if (event.reason === "deregistered") return deregistered("removed from the fleet");
       socket = undefined;
       ui?.setStatus("waterworks", "offline; reconnecting");
       reconnectTimer = setTimeout(connect, 500);
@@ -184,7 +204,7 @@ export default function waterworks(pi) {
             {
               kind: "agent",
               name: endpointName(pi.getSessionName()),
-              accepts: acceptedTypes,
+              accepts: [...acceptedTypes, "core.shutdown.v1"],
               emits: ["demo.echoed.v1", "core.error.v1", ...canvasTypes],
               metadata: { harness: "pi", cwd: ctx.cwd, pid: String(process.pid) },
             },
@@ -311,7 +331,7 @@ export default function waterworks(pi) {
       const response = await request(
         "POST",
         "/v1/endpoints",
-        { kind: "tool", name: params.title, accepts: canvasTypes, emits: ["canvas.comment.v1", "canvas.action.v1", "core.error.v1"], metadata: { tool: "canvas" } },
+        { kind: "tool", name: params.title, accepts: [...canvasTypes, "core.shutdown.v1"], emits: ["canvas.comment.v1", "canvas.action.v1", "core.error.v1"], metadata: { tool: "canvas" } },
         { "x-ww-admin-token": admin },
       );
       const id = response.endpoint.id;

@@ -63,13 +63,33 @@ function setStatus(text) {
   $("#status").textContent = text;
 }
 
+// Set once this canvas's endpoint is gone (Disconnect, or core.shutdown.v1): stop reconnecting.
+let closed = null;
+function closeCanvas(reason) {
+  closed = reason;
+  socket = undefined;
+  setStatus(`closed: ${reason}`);
+  render();
+}
+
+// A shutdown request closes the canvas: it deregisters itself, so it leaves the fleet.
+async function shutdown(message) {
+  await fetch(`/v1/endpoints/${creds.id}`, {
+    method: "DELETE",
+    headers: { "x-ww-endpoint": creds.id, authorization: `Bearer ${creds.token}` },
+  }).catch(() => {});
+  closeCanvas(`shut down by ${message.from}`);
+}
+
 // History rebuilds the page after reloads; the socket then streams live messages.
 async function connect() {
+  if (closed) return;
   setStatus("connecting");
   try {
     const response = await fetch(`/v1/endpoints/${creds.id}/history`, {
       headers: { authorization: `Bearer ${creds.token}` },
     });
+    if (response.status === 401) return closeCanvas("this canvas was removed");
     if (!response.ok) throw new Error(`history HTTP ${response.status}`);
     for (const message of (await response.json()).messages) apply(message);
     render();
@@ -91,7 +111,10 @@ async function connect() {
   };
   current.onmessage = ({ data }) => {
     const frame = JSON.parse(data);
-    if (frame.op === "message") {
+    if (frame.op === "message" && frame.message.type === "core.shutdown.v1") {
+      current.send(JSON.stringify({ op: "ack", id: frame.message.id }));
+      shutdown(frame.message);
+    } else if (frame.op === "message") {
       apply(frame.message);
       render();
       current.send(JSON.stringify({ op: "ack", id: frame.message.id }));
@@ -101,8 +124,9 @@ async function connect() {
       setStatus(`error: ${frame.error}`);
     }
   };
-  current.onclose = () => {
-    if (socket !== current) return;
+  current.onclose = (event) => {
+    if (socket !== current || closed) return;
+    if (event.reason === "deregistered") return closeCanvas("this canvas was removed");
     socket = undefined;
     setStatus("offline; reconnecting");
     render();

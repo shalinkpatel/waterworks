@@ -9,8 +9,13 @@ defmodule Ww.Fleet do
     * `fleet.subscribe.v1 {to?}`: stream state to the sender, or to the canvas `to`.
       Canvases receive `canvas.data.v1`; anything else receives `fleet.state.v1`.
     * `fleet.unsubscribe.v1 {to?}`
-    * `fleet.remove.v1 {id}` or `canvas.action.v1 {action: "remove", id}` from a subscriber:
-      deregisters an endpoint that exists and is offline.
+    * `fleet.remove.v1 {id}` (offline endpoints) and `fleet.disconnect.v1 {id}` (online
+      ones) from a subscriber: deregisters the endpoint; a connected one is disconnected.
+    * `fleet.shutdown.v1 {id}` from a subscriber: sends `core.shutdown.v1` to an online
+      endpoint, asking it to stop (each endpoint decides what that means).
+    * Canvases send the same as `canvas.action.v1 {action: "remove" | "disconnect" |
+      "shutdown", id}`.
+    * `core.shutdown.v1`: the fleet deregisters itself and its viewer and exits.
 
   State: `{fleet, endpoints: [{name, kind, type, status, id, cwd}], updated}`.
   """
@@ -51,10 +56,13 @@ defmodule Ww.Fleet do
       id: id,
       interval: interval_ms,
       last: nil,
-      seen: 0,
+      fresh: [],
+      viewer: viewer,
       subscribers: %{viewer => "fleet.state.v1"}
     }
 
+    parent = self()
+    spawn_link(fn -> tail(parent, %{id: id, headers: auth}) end)
     loop(state)
   end
 
@@ -73,9 +81,12 @@ defmodule Ww.Fleet do
         "fleet.subscribe.v1",
         "fleet.unsubscribe.v1",
         "fleet.remove.v1",
-        "canvas.action.v1"
+        "fleet.disconnect.v1",
+        "fleet.shutdown.v1",
+        "canvas.action.v1",
+        "core.shutdown.v1"
       ],
-      emits: ["fleet.state.v1", "canvas.data.v1"],
+      emits: ["fleet.state.v1", "canvas.data.v1", "core.shutdown.v1"],
       metadata: %{tool: "fleet"}
     }
   end
@@ -84,21 +95,33 @@ defmodule Ww.Fleet do
     %{
       kind: "tool",
       name: "fleet view",
-      accepts: ["fleet.state.v1"],
-      emits: ["fleet.subscribe.v1", "fleet.remove.v1"],
+      accepts: ["fleet.state.v1", "core.shutdown.v1"],
+      emits: ["fleet.subscribe.v1", "fleet.remove.v1", "fleet.disconnect.v1", "fleet.shutdown.v1"],
       metadata: %{tool: "fleet-view"}
     }
   end
 
+  # The tail makes the fleet "online" and delivers requests as they arrive; discovery is
+  # polled every interval because endpoint changes are not pushed to anyone.
   defp loop(state) do
-    endpoints = endpoints(state)
-    {state, changed?, fresh} = handle_messages(state, endpoints)
-    # Removals change the fleet, so list again rather than waiting a whole interval.
-    endpoints = if changed?, do: endpoints(state), else: endpoints
-    current = rows(endpoints)
+    state = poll(state)
+    wait(state, System.monotonic_time(:millisecond) + state.interval)
+  end
 
-    # Everyone gets changes; new subscribers get the current state even when nothing changed.
-    targets = if current != state.last, do: Map.keys(state.subscribers), else: fresh
+  defp wait(state, deadline) do
+    receive do
+      {:fleet_message, message} -> state |> handle_message(message) |> wait(deadline)
+      :fleet_deregistered -> exit_deregistered()
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) -> loop(state)
+    end
+  end
+
+  # Sends the list to everyone when it changed, and to new subscribers regardless.
+  defp poll(state) do
+    endpoints = endpoints(state)
+    current = rows(endpoints)
+    targets = if current != state.last, do: Map.keys(state.subscribers), else: state.fresh
 
     payload = %{
       fleet: state.id,
@@ -108,12 +131,23 @@ defmodule Ww.Fleet do
     }
 
     state = Enum.reduce(Enum.uniq(targets), state, &deliver(&2, &1, payload))
-    Process.sleep(state.interval)
-    loop(%{state | last: current})
+    %{state | last: current, fresh: []}
   end
 
-  defp endpoints(state),
-    do: CLI.request(:get, "/v1/endpoints", nil, state.auth, false)["endpoints"]
+  defp exit_deregistered do
+    IO.puts(:stderr, "fleet was disconnected; exiting")
+    System.halt(0)
+  end
+
+  # Someone disconnected the fleet itself: its token is gone, so exit instead of crashing.
+  defp endpoints(state) do
+    CLI.request(:get, "/v1/endpoints", nil, state.auth, false)["endpoints"]
+  rescue
+    error ->
+      if Exception.message(error) =~ "HTTP 401",
+        do: exit_deregistered(),
+        else: reraise(error, __STACKTRACE__)
+  end
 
   # A subscriber that was deregistered (404) is dropped instead of crashing the loop.
   defp deliver(state, to, payload) do
@@ -132,36 +166,94 @@ defmodule Ww.Fleet do
       %{state | subscribers: Map.delete(state.subscribers, to)}
   end
 
-  # shortcut: reads new messages by polling history (one round trip per interval); switch to
-  # the streaming tail if the interval needs to drop below a second.
-  defp handle_messages(state, endpoints) do
-    messages =
-      CLI.request(:get, "/v1/endpoints/#{state.id}/history", nil, state.auth, false)["messages"]
-      |> Enum.filter(&(&1["sequence"] > state.seen and &1["from"] != state.id))
+  # Decided against a fresh listing, so "online"/"offline" reflects the moment of the click.
+  defp handle_message(state, message) do
+    case command(message, state.subscribers, endpoints(state), state.id) do
+      {:subscribe, to, type} ->
+        poll(%{put_in(state.subscribers[to], type) | fresh: [to | state.fresh]})
 
-    {state, changed?, fresh} =
-      Enum.reduce(messages, {state, false, []}, fn message, {state, changed?, fresh} ->
-        case command(message, state.subscribers, endpoints, state.id) do
-          {:subscribe, to, type} ->
-            {put_in(state.subscribers[to], type), changed?, [to | fresh]}
+      {:unsubscribe, to} ->
+        %{state | subscribers: Map.delete(state.subscribers, to)}
 
-          {:unsubscribe, to} ->
-            {%{state | subscribers: Map.delete(state.subscribers, to)}, changed?, fresh}
+      {:remove, id} ->
+        if remove(state, id), do: poll(state), else: state
 
-          {:remove, id} ->
-            {state, remove(state, id) or changed?, fresh}
+      {:shutdown, id} ->
+        request_shutdown(state, id, message["from"])
+        state
 
-          :ignore ->
-            {state, changed?, fresh}
-        end
-      end)
+      :exit ->
+        exit_fleet(state, message["from"])
 
-    for message <- messages do
-      CLI.request(:post, "/v1/endpoints/#{state.id}/ack", %{id: message["id"]}, state.auth, false)
+      :ignore ->
+        state
+    end
+  end
+
+  # Streams this endpoint's mailbox (auto-acknowledged) to the fleet process, reconnecting if
+  # the daemon restarts. A deregistered endpoint gets a final "deregistered" line or a 401.
+  defp tail(parent, auth) do
+    url = String.to_charlist(CLI.base_url() <> "/v1/endpoints/#{auth.id}/tail?ack=1")
+
+    headers =
+      Enum.map(auth.headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
+
+    # Its own httpc profile, so the endless stream never blocks the main loop's requests.
+    case :inets.start(:httpc, profile: :ww_fleet_tail) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
     end
 
-    seen = Enum.reduce(messages, state.seen, &max(&1["sequence"], &2))
-    {%{state | seen: seen}, changed?, fresh}
+    case :httpc.request(:get, {url, headers}, [], [sync: false, stream: :self], :ww_fleet_tail) do
+      {:ok, ref} -> tail_stream(parent, auth, ref, "")
+      {:error, _} -> tail_retry(parent, auth)
+    end
+  end
+
+  defp tail_stream(parent, auth, ref, buffer) do
+    receive do
+      {:http, {^ref, :stream_start, _headers}} ->
+        tail_stream(parent, auth, ref, buffer)
+
+      {:http, {^ref, :stream, chunk}} ->
+        [rest | lines] = String.split(buffer <> chunk, "\n") |> Enum.reverse()
+
+        for line <- Enum.reverse(lines), line != "" do
+          case Jason.decode!(line) do
+            %{"op" => "message", "message" => message} -> send(parent, {:fleet_message, message})
+            %{"op" => "deregistered"} -> send(parent, :fleet_deregistered)
+            _ -> :ok
+          end
+        end
+
+        tail_stream(parent, auth, ref, rest)
+
+      {:http, {^ref, {{_, 401, _}, _, _}}} ->
+        send(parent, :fleet_deregistered)
+
+      {:http, {^ref, _end_or_error}} ->
+        tail_retry(parent, auth)
+    end
+  end
+
+  defp tail_retry(parent, auth) do
+    Process.sleep(1_000)
+    tail(parent, auth)
+  end
+
+  defp request_shutdown(state, id, requested_by) do
+    body = %{to: id, type: "core.shutdown.v1", payload: %{requested_by: requested_by}}
+    CLI.request(:post, "/v1/messages", body, state.auth, false)
+    IO.puts(:stderr, "asked #{id} to shut down")
+  rescue
+    error -> IO.puts(:stderr, "could not ask #{id} to shut down: #{Exception.message(error)}")
+  end
+
+  # Leaves no stale endpoints behind: the viewer, then the fleet itself.
+  defp exit_fleet(state, requested_by) do
+    for id <- [state.viewer, state.id], do: remove(state, id)
+    IO.puts(:stderr, "fleet shut down by #{requested_by}")
+    System.halt(0)
   end
 
   defp remove(state, id) do
@@ -175,9 +267,17 @@ defmodule Ww.Fleet do
       false
   end
 
+  @actions %{
+    "fleet.remove.v1" => "remove",
+    "fleet.disconnect.v1" => "disconnect",
+    "fleet.shutdown.v1" => "shutdown",
+    "canvas.action.v1" => nil
+  }
+
   @doc """
-  Decides what an incoming message asks for. Message content is untrusted: only subscribers
-  may remove, and only endpoints that exist and are offline (never the fleet itself). A sender
+  Decides what an incoming message asks for. Message content is untrusted: only subscribers may
+  act, only on endpoints that exist; remove needs it offline, disconnect and shutdown need it
+  online, and the fleet never removes itself (it only exits on a shutdown). A sender
   may subscribe itself or a canvas, but not other kinds of endpoint.
   """
   def command(%{"type" => type, "from" => from} = message, subscribers, endpoints, self_id) do
@@ -201,23 +301,29 @@ defmodule Ww.Fleet do
       "fleet.unsubscribe.v1" ->
         {:unsubscribe, target}
 
-      type when type in ["fleet.remove.v1", "canvas.action.v1"] ->
-        id = payload["id"]
-        remove? = type == "fleet.remove.v1" or payload["action"] == "remove"
+      "core.shutdown.v1" ->
+        :exit
 
-        if remove? and Map.has_key?(subscribers, from) and removable?(id, endpoints, self_id),
-          do: {:remove, id},
-          else: :ignore
+      type when is_map_key(@actions, type) ->
+        action = if type == "canvas.action.v1", do: payload["action"], else: @actions[type]
+        id = payload["id"]
+        target = Enum.find(endpoints, &(&1["id"] == id))
+
+        cond do
+          not Map.has_key?(subscribers, from) or is_nil(target) -> :ignore
+          # Shutting the fleet down from its own view is allowed; removing it is not.
+          action == "shutdown" and id == self_id -> :exit
+          id == self_id -> :ignore
+          action == "remove" and target["online"] == false -> {:remove, id}
+          action == "disconnect" and target["online"] == true -> {:remove, id}
+          action == "shutdown" and target["online"] == true -> {:shutdown, id}
+          true -> :ignore
+        end
 
       _ ->
         :ignore
     end
   end
-
-  defp removable?(id, endpoints, self_id) when is_binary(id),
-    do: id != self_id and Enum.any?(endpoints, &(&1["id"] == id and &1["online"] == false))
-
-  defp removable?(_id, _endpoints, _self_id), do: false
 
   @doc "Page rows for every endpoint, in a stable order."
   def rows(endpoints) do

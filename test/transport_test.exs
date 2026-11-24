@@ -156,6 +156,10 @@ defmodule WwTransportTest do
     assert renamed["metadata"] == %{"harness" => "pi"}
     assert renamed["kind"] == "agent"
 
+    victim_socket = TestWS.connect(victim.id, victim_token)
+    # Its pending message arriving shows the socket is subscribed.
+    {victim_socket, %{"op" => "message"}} = TestWS.receive_json(victim_socket)
+
     # Another endpoint cannot delete you; the admin token or your own token can.
     assert {401, _} =
              TestHTTP.request(
@@ -179,6 +183,8 @@ defmodule WwTransportTest do
              )
 
     assert :mnesia.dirty_index_read(:ww_messages, victim.id, :to) == []
+    # A connected endpoint is told why it was disconnected, so clients stop reconnecting.
+    assert TestWS.receive_close(victim_socket) == {1000, "deregistered"}
 
     assert {404, %{"error" => "recipient_not_found"}} =
              TestHTTP.request(

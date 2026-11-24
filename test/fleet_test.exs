@@ -58,7 +58,8 @@ defmodule WwFleetTest do
     %{"id" => "ep_agent", "accepts" => ["demo.echo.v1"], "online" => true},
     %{"id" => "ep_canvas", "accepts" => ["canvas.data.v1"], "online" => true},
     %{"id" => "ep_view", "accepts" => ["fleet.state.v1"], "online" => true},
-    %{"id" => "ep_dead", "accepts" => [], "online" => false}
+    %{"id" => "ep_dead", "accepts" => [], "online" => false},
+    %{"id" => "ep_fleet", "accepts" => [], "online" => true}
   ]
 
   defp command(type, from, payload, subscribers \\ %{}),
@@ -81,35 +82,45 @@ defmodule WwFleetTest do
     assert command("fleet.subscribe.v1", "ep_agent", %{"to" => "ep_missing"}) == :ignore
   end
 
-  test "remove: only subscribers, only existing offline endpoints, never the fleet" do
+  test "remove (offline), disconnect and shutdown (online): subscribers only, never the fleet" do
     subs = %{"ep_view" => "fleet.state.v1", "ep_canvas" => "canvas.data.v1"}
+
+    canvas = fn action, id ->
+      command("canvas.action.v1", "ep_canvas", %{"action" => action, "id" => id}, subs)
+    end
 
     assert command("fleet.remove.v1", "ep_view", %{"id" => "ep_dead"}, subs) ==
              {:remove, "ep_dead"}
 
-    assert command(
-             "canvas.action.v1",
-             "ep_canvas",
-             %{"action" => "remove", "id" => "ep_dead"},
-             subs
-           ) ==
-             {:remove, "ep_dead"}
+    assert canvas.("remove", "ep_dead") == {:remove, "ep_dead"}
 
-    assert command("fleet.remove.v1", "ep_agent", %{"id" => "ep_dead"}, subs) == :ignore
+    assert command("fleet.disconnect.v1", "ep_view", %{"id" => "ep_agent"}, subs) ==
+             {:remove, "ep_agent"}
+
+    assert canvas.("disconnect", "ep_agent") == {:remove, "ep_agent"}
+
+    assert command("fleet.shutdown.v1", "ep_view", %{"id" => "ep_agent"}, subs) ==
+             {:shutdown, "ep_agent"}
+
+    assert canvas.("shutdown", "ep_agent") == {:shutdown, "ep_agent"}
+
+    # Wrong state for the action, not a subscriber, unknown target, or unknown action.
     assert command("fleet.remove.v1", "ep_view", %{"id" => "ep_agent"}, subs) == :ignore
-    assert command("fleet.remove.v1", "ep_view", %{"id" => "ep_fleet"}, subs) == :ignore
+    assert command("fleet.disconnect.v1", "ep_view", %{"id" => "ep_dead"}, subs) == :ignore
+    assert command("fleet.shutdown.v1", "ep_view", %{"id" => "ep_dead"}, subs) == :ignore
+    assert command("fleet.disconnect.v1", "ep_agent", %{"id" => "ep_canvas"}, subs) == :ignore
+    assert command("fleet.remove.v1", "ep_view", %{"id" => "ep_missing"}, subs) == :ignore
+    assert canvas.("nuke", "ep_dead") == :ignore
 
-    assert command(
-             "canvas.action.v1",
-             "ep_canvas",
-             %{"action" => "nuke", "id" => "ep_dead"},
-             subs
-           ) == :ignore
+    # The fleet exits on a shutdown (its own, or core.shutdown.v1), but is never removed.
+    assert command("fleet.shutdown.v1", "ep_view", %{"id" => "ep_fleet"}, subs) == :exit
+    assert command("fleet.disconnect.v1", "ep_view", %{"id" => "ep_fleet"}, subs) == :ignore
+    assert command("core.shutdown.v1", "ep_anyone", %{}, subs) == :exit
   end
 
   test "the canvas page inlines the view script" do
     page = Fleet.canvas_page()
     refute page =~ ~s(src="/fleet/app.js")
-    assert page =~ "fleet.remove.v1"
+    assert page =~ "requestAction"
   end
 end
