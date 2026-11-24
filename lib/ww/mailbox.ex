@@ -17,6 +17,18 @@ defmodule Ww.Mailbox do
     end
   end
 
+  @doc "Stops the mailbox and tells its subscribers (sockets, tails) to disconnect."
+  def stop(id) do
+    for pid <- :pg.get_members(:ww, {:endpoint, id}), do: send(pid, :ww_deregistered)
+
+    case :global.whereis_name({:ww_mailbox, id}) do
+      :undefined -> :ok
+      pid -> DynamicSupervisor.terminate_child({Ww.MailboxSupervisor, node(pid)}, pid)
+    end
+
+    :ok
+  end
+
   defp ensure_started(id) do
     case :global.whereis_name({:ww_mailbox, id}) do
       :undefined ->

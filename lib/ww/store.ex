@@ -69,6 +69,29 @@ defmodule Ww.Store do
     :ok
   end
 
+  @doc "Deletes an endpoint, its mailbox messages, and its sequence counter in one transaction."
+  def delete_endpoint(id) do
+    {:atomic, result} =
+      :mnesia.transaction(fn ->
+        case :mnesia.read(:ww_endpoints, id, :write) do
+          [] ->
+            :not_found
+
+          [_] ->
+            :mnesia.delete({:ww_endpoints, id})
+            :mnesia.delete({:ww_counters, id})
+
+            {:ww_messages, :_, :_, id, :_, :_, :_, :_, :_, :_}
+            |> :mnesia.match_object()
+            |> Enum.each(&:mnesia.delete({:ww_messages, elem(&1, 1)}))
+
+            :ok
+        end
+      end)
+
+    if result == :ok, do: :ok, else: {:error, result}
+  end
+
   def get_endpoint(id) do
     case :mnesia.dirty_read(:ww_endpoints, id) do
       [{:ww_endpoints, ^id, endpoint}] -> endpoint

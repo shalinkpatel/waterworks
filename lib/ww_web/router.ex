@@ -54,6 +54,35 @@ defmodule WwWeb.Router do
     end
   end
 
+  # Admin token: delete any endpoint. Endpoint credentials: delete only yourself.
+  delete "/v1/endpoints/:id" do
+    auth =
+      case header(conn, "x-ww-admin-token") do
+        nil -> {:endpoint, header(conn, "x-ww-endpoint"), bearer_token(conn)}
+        admin -> {:admin, admin}
+      end
+
+    case Ww.deregister(id, auth) do
+      :ok -> json(conn, 200, %{ok: true, id: id})
+      {:error, reason} -> error(conn, reason)
+    end
+  end
+
+  patch "/v1/endpoints/:id" do
+    with true <- header(conn, "x-ww-endpoint") == id || {:error, :unauthorized},
+         {:ok, body, conn} <- read_json(conn),
+         {:ok, endpoint} <-
+           Ww.update_endpoint(id, bearer_token(conn), %{
+             name: body["name"],
+             metadata: body["metadata"]
+           }) do
+      json(conn, 200, %{endpoint: Ww.Wire.endpoint(endpoint)})
+    else
+      {:error, :invalid_json, conn} -> json(conn, 400, %{error: "invalid_json"})
+      {:error, reason} -> error(conn, reason)
+    end
+  end
+
   get "/v1/endpoints/:id/history" do
     case Ww.history(id, bearer_token(conn)) do
       {:ok, messages} -> json(conn, 200, %{messages: Enum.map(messages, &Ww.Wire.message/1)})

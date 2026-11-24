@@ -126,9 +126,11 @@ pi -e "$PWD/.pi/extensions/waterworks.js"
 ```
 
 Alternatively, pre-register an agent and supply `WW_ENDPOINT` and `WW_TOKEN`.
+The endpoint is named after the session (`/name`), falling back to `pi-<pid>`,
+and is renamed whenever the session name changes.
 The extension reconnects automatically, keeps credentials in memory, injects
 supported messages with `pi.sendMessage(..., deliverAs: "steer")`, and registers
-`ww_send`, `ww_discover`, `ww_dashboard_open`, and `ww_dashboard_publish`
+`ww_send`, `ww_inbox`, `ww_discover`, `ww_dashboard_open`, and `ww_dashboard_publish`
 (publish an HTML file from disk) tools for the model.
 `ww_dashboard_open` creates a dashboard, shows its URL to you, and opens it on
 macOS (set `WW_OPEN_BROWSER=0` to disable); the model receives only the
@@ -209,6 +211,8 @@ Registration instead uses `X-WW-Admin-Token`.
 | History | `GET /v1/endpoints/:id/history` |
 | Streaming tail | `GET /v1/endpoints/:id/tail` |
 | Acknowledge | `POST /v1/endpoints/:id/ack` |
+| Rename (self: `name`, `metadata`) | `PATCH /v1/endpoints/:id` |
+| Deregister (self, or admin token) | `DELETE /v1/endpoints/:id` |
 | WebSocket | `GET /v1/endpoints/:id/socket` |
 
 Browser WebSockets authenticate with subprotocols so tokens do not appear in
@@ -329,6 +333,22 @@ addressed them with `dashboard.clear.v1 {comments: [ids]}` or `{all: true}`
 by agent". A reload rebuilds the page, clears included, from the endpoint's
 mailbox history.
 
+Page controls can call `waterworks.action({...})` (any JSON object up to 64 KB);
+the host sends it as `dashboard.action.v1` to the endpoint that last rendered
+the page. Like comment fields, treat action payloads as untrusted input.
+
+### Fleet dashboard
+
+`ww fleet` registers a dashboard showing every registered agent and tool, with
+counts, sorting, kind/type/status filters, and search. It needs `WW_ADMIN_TOKEN`,
+prints and opens the dashboard URL (`--no-open` to skip), publishes the page
+once, and sends `dashboard.data.v1` only when the fleet changes (polled every
+`--interval` seconds, default 5). Its Type column reads `metadata.harness` for agents (the Pi adapter
+sets `pi`) and `metadata.tool` for tools (dashboards set `dashboard`); register
+your own with `--metadata harness=...` or `--metadata tool=...`. Offline rows
+have a Remove button (click twice to confirm); `ww fleet` deletes only endpoints
+that exist and are offline, along with their messages.
+
 ## Tests
 
 ```sh
@@ -367,8 +387,9 @@ When a sandbox forbids Mix's local compile-lock socket, prefix commands with
   the plain HTTP transport are for trusted networks only.
 - `disc_copies` retains all history in RAM and on disk; retention and large
   payload storage are not implemented.
-- Endpoints cannot be deregistered and tokens cannot be rotated yet; a leaked
-  endpoint token stays valid. Every Pi session and dashboard adds an endpoint.
+- Tokens cannot be rotated yet; a leaked endpoint token stays valid until the
+  endpoint is deregistered. Every Pi session and dashboard adds an endpoint; remove
+  dead ones with `ww deregister` or the fleet dashboard.
 - Mailbox ownership uses `:global`, which assumes a connected full-mesh cluster;
   OTP may log and resolve a name conflict during concurrent takeover.
 - Dashboard comments made before a reload persist only in that browser tab.

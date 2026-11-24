@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 const { default: waterworks } = await import(pathToFileURL(`${process.cwd()}/.pi/extensions/waterworks.js`).href);
 const tools = new Map();
 const handlers = new Map();
-waterworks({ on: (name, fn) => handlers.set(name, fn), registerTool: (tool) => tools.set(tool.name, tool) });
+waterworks({ on: (name, fn) => handlers.set(name, fn), registerTool: (tool) => tools.set(tool.name, tool), getSessionName: () => undefined });
 
 const notices = [];
 const ctx = {
