@@ -1,8 +1,8 @@
 defmodule Ww.Fleet do
   @moduledoc """
-  `ww fleet`: a dashboard of every registered agent and tool. Registers one dashboard,
+  `ww fleet`: a canvas of every registered agent and tool. Registers one canvas,
   publishes `priv/fleet/index.html` to it, then polls discovery and sends
-  `dashboard.data.v1` only when the fleet changes, so history stays small.
+  `canvas.data.v1` only when the fleet changes, so history stays small.
   """
 
   alias Ww.CLI
@@ -17,17 +17,17 @@ defmodule Ww.Fleet do
       CLI.request(
         :post,
         "/v1/endpoints",
-        CLI.dashboard_endpoint("Waterworks fleet"),
+        CLI.canvas_endpoint("Waterworks fleet"),
         [{"x-ww-admin-token", admin}],
         false
       )
 
     auth = [{"x-ww-endpoint", id}, {"authorization", "Bearer #{token}"}]
-    url = CLI.dashboard_url(id, token)
-    IO.puts(:stderr, "fleet dashboard: #{url}")
+    url = CLI.canvas_url(id, token)
+    IO.puts(:stderr, "fleet canvas: #{url}")
     if open? and match?({:unix, :darwin}, :os.type()), do: System.cmd("open", [url])
 
-    send_as(auth, id, "dashboard.render.v1", %{html: @page, title: "Waterworks fleet"})
+    send_as(auth, id, "canvas.render.v1", %{html: @page, title: "Waterworks fleet"})
 
     loop(%{
       auth: auth,
@@ -50,7 +50,7 @@ defmodule Ww.Fleet do
     if current != state.last do
       updated = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
       payload = %{endpoints: current, updated: "updated " <> updated}
-      send_as(state.auth, state.id, "dashboard.data.v1", payload)
+      send_as(state.auth, state.id, "canvas.data.v1", payload)
     end
 
     Process.sleep(state.interval)
@@ -60,22 +60,22 @@ defmodule Ww.Fleet do
   defp endpoints(state),
     do: CLI.request(:get, "/v1/endpoints", nil, state.auth, false)["endpoints"]
 
-  # Page buttons arrive as dashboard.action.v1 in our own mailbox. Page content is untrusted, so
-  # a removal is honoured only for an endpoint that exists, is offline, and is not this dashboard.
-  # shortcut: re-reads the whole history each poll; fine for one dashboard, add a pending-only
+  # Page buttons arrive as canvas.action.v1 in our own mailbox. Page content is untrusted, so
+  # a removal is honoured only for an endpoint that exists, is offline, and is not this canvas.
+  # shortcut: re-reads the whole history each poll; fine for one canvas, add a pending-only
   # route if histories grow large.
   defp handle_actions(state, endpoints) do
     actions =
       CLI.request(:get, "/v1/endpoints/#{state.id}/history", nil, state.auth, false)["messages"]
-      # Only the page itself (it holds this dashboard's token) sends actions from our own id.
-      |> Enum.filter(&(&1["type"] == "dashboard.action.v1" and &1["from"] == state.id))
+      # Only the page itself (it holds this canvas's token) sends actions from our own id.
+      |> Enum.filter(&(&1["type"] == "canvas.action.v1" and &1["from"] == state.id))
       |> Enum.filter(&(&1["sequence"] > state.seen))
 
     removed =
       for message <- actions, removable?(message["payload"], endpoints, state.id) do
         id = message["payload"]["id"]
 
-        # A double click or another fleet dashboard may have removed it already.
+        # A double click or another fleet canvas may have removed it already.
         try do
           CLI.request(
             :delete,
@@ -105,7 +105,7 @@ defmodule Ww.Fleet do
     Map.merge(state, %{seen: seen, removed?: removed != []})
   end
 
-  @doc "Whether a page action asks to remove an existing, offline endpoint other than the dashboard."
+  @doc "Whether a page action asks to remove an existing, offline endpoint other than the canvas."
   def removable?(%{"action" => "remove", "id" => id}, endpoints, self_id) when is_binary(id),
     do: id != self_id and Enum.any?(endpoints, &(&1["id"] == id and &1["online"] == false))
 
@@ -114,7 +114,7 @@ defmodule Ww.Fleet do
   defp send_as(auth, id, type, payload),
     do: CLI.request(:post, "/v1/messages", %{to: id, type: type, payload: payload}, auth, false)
 
-  @doc "Page rows for every endpoint except the dashboard itself, in a stable order."
+  @doc "Page rows for every endpoint except the canvas itself, in a stable order."
   def rows(endpoints, self_id) do
     endpoints
     |> Enum.reject(&(&1["id"] == self_id))
@@ -141,7 +141,7 @@ defmodule Ww.Fleet do
   defp type(e),
     do:
       meta(e, "tool") ||
-        if("dashboard.render.v1" in (e["accepts"] || []), do: "dashboard", else: "unknown")
+        if("canvas.render.v1" in (e["accepts"] || []), do: "canvas", else: "unknown")
 
   defp meta(e, key), do: get_in(e, ["metadata", key])
 end

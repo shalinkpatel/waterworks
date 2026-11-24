@@ -44,10 +44,10 @@ try {
   const { cdp, evaluate, rect, mouse, click, key, drag } = browser;
 
   // Render and one data message before the page opens: both must replay from history.
-  await send("dashboard.render.v1", { title: "Report", html: page("Report v1") });
-  const early = await send("dashboard.data.v1", { p50: 42 });
+  await send("canvas.render.v1", { title: "Report", html: page("Report v1") });
+  const early = await send("canvas.data.v1", { p50: 42 });
 
-  await cdp("Page.navigate", { url: `${base}/dashboard#${new URLSearchParams({ endpoint: dash.id, token: dash.token })}` });
+  await cdp("Page.navigate", { url: `${base}/canvas#${new URLSearchParams({ endpoint: dash.id, token: dash.token })}` });
   const settled = (sequence) =>
     until(`sequence ${sequence}`, () => evaluate(`Number(document.body.dataset.sequence) >= ${sequence}`));
   await settled(early.sequence);
@@ -62,7 +62,7 @@ try {
     await click("#composer-send");
     comments += 1;
     return until(`comment ${comments} in agent mailbox`, async () => {
-      const found = (await agent("GET", `/v1/endpoints/${AGENT_ID}/history`)).messages.filter((m) => m.type === "dashboard.comment.v1");
+      const found = (await agent("GET", `/v1/endpoints/${AGENT_ID}/history`)).messages.filter((m) => m.type === "canvas.comment.v1");
       return found.length === comments && found.at(-1);
     });
   };
@@ -80,10 +80,10 @@ try {
   checks.contextReplayedData = context.text?.includes("latency 42ms");
   checks.contextIds = context.ids?.includes("latency");
   checks.sandboxIsolated = context.text?.includes("isolation blocked");
-  checks.versionInComment = first.payload.dashboard.version === 1;
+  checks.versionInComment = first.payload.canvas.version === 1;
 
   // 2: live data streams into the running page.
-  await settled((await send("dashboard.data.v1", { p50: 77 })).sequence);
+  await settled((await send("canvas.data.v1", { p50: 77 })).sequence);
   const second = await comment("Better", dragTop);
   checks.liveData = second.payload.context?.text?.includes("latency 77ms");
 
@@ -98,7 +98,7 @@ try {
 
   // A republished ~5 MB page replaces the frame live.
   const v2Html = page("Report v2", "x".repeat(5_000_000));
-  const v2 = await send("dashboard.render.v1", { html: v2Html });
+  const v2 = await send("canvas.render.v1", { html: v2Html });
   await settled(v2.sequence);
   await until("v2 chip", () => evaluate(`document.querySelector("#version").textContent === "v2"`));
   await until("v2 frame sized", () => evaluate(`document.querySelector("#page")?.offsetHeight > 1600`));
@@ -107,15 +107,15 @@ try {
   const v3Html = v2Html.replace(">waiting<", ">waiting for delta<");
   const ops = lineDelta(v2Html, v3Html);
   checks.deltaIsSmall = JSON.stringify(ops).length < 2000;
-  const v3 = await send("dashboard.delta.v1", { base: v2.id, ops });
+  const v3 = await send("canvas.delta.v1", { base: v2.id, ops });
   await settled(v3.sequence);
   await until("v3 chip", () => evaluate(`document.querySelector("#version").textContent === "v3"`));
   await until("v3 frame sized", () => evaluate(`document.querySelector("#page")?.offsetHeight > 1600`));
   const afterDelta = await comment("Delta landed", dragTop);
-  checks.deltaApplied = afterDelta.payload.context?.text?.includes("waiting for delta") && afterDelta.payload.dashboard.version === 3;
+  checks.deltaApplied = afterDelta.payload.context?.text?.includes("waiting for delta") && afterDelta.payload.canvas.version === 3;
 
   // A delta against a stale base is refused: the page stays at v3 and the sender hears why.
-  const stale = await send("dashboard.delta.v1", { base: v2.id, ops });
+  const stale = await send("canvas.delta.v1", { base: v2.id, ops });
   await settled(stale.sequence);
   const errors = async () =>
     (await agent("GET", `/v1/endpoints/${AGENT_ID}/history`)).messages.filter((m) => m.type === "core.error.v1");
@@ -131,7 +131,7 @@ try {
   );
   await until("frame sized after reload", () => evaluate(`document.querySelector("#page")?.offsetHeight > 1600`));
   const fourth = await comment("After reload", dragTop);
-  checks.reloadRebuilt = fourth.payload.context?.text?.includes("waiting for delta") && fourth.payload.dashboard.version === 3;
+  checks.reloadRebuilt = fourth.payload.context?.text?.includes("waiting for delta") && fourth.payload.canvas.version === 3;
   checks.mismatchNotDuplicated = (await errors()).length === 1;
 
   // Element picker inside the sandboxed frame; the marker follows the element when a delta moves it.
@@ -152,13 +152,13 @@ try {
   const markerTop = async () => (await rect(`[data-comment="${picked.id}"]`)).top - (await rect("#page")).top;
   checks.frameMarkerOnElement = Math.abs((await markerTop()) - 200) < 4;
 
-  const v4 = await send("dashboard.delta.v1", { base: v3.id, ops: lineDelta(v3Html, v3Html.replace("top:200px", "top:420px")) });
+  const v4 = await send("canvas.delta.v1", { base: v3.id, ops: lineDelta(v3Html, v3Html.replace("top:200px", "top:420px")) });
   await settled(v4.sequence);
   await until("v4 chip", () => evaluate(`document.querySelector("#version").textContent === "v4"`));
   await until("frame marker follows the element", async () => Math.abs((await markerTop()) - 420) < 4);
   checks.frameMarkerFollows = true;
 
-  await send("dashboard.clear.v1", { all: true });
+  await send("canvas.clear.v1", { all: true });
   await until("agent cleared all", () =>
     evaluate(`document.querySelectorAll(".region.placed").length === 0 && document.querySelectorAll(".comment.cleared").length === 6`),
   );

@@ -86,7 +86,7 @@ defmodule Ww.CLI do
     |> print()
   end
 
-  defp client("dashboard", args) do
+  defp client("canvas", args) do
     {opts, _, invalid} = OptionParser.parse(args, switches: [title: :string])
     if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
     admin = System.get_env("WW_ADMIN_TOKEN") || raise("WW_ADMIN_TOKEN is required")
@@ -95,12 +95,12 @@ defmodule Ww.CLI do
       request(
         :post,
         "/v1/endpoints",
-        dashboard_endpoint(opts[:title] || "dashboard"),
+        canvas_endpoint(opts[:title] || "canvas"),
         [{"x-ww-admin-token", admin}],
         false
       )
 
-    print(%{endpoint: endpoint, token: token, url: dashboard_url(endpoint["id"], token)})
+    print(%{endpoint: endpoint, token: token, url: canvas_url(endpoint["id"], token)})
   end
 
   defp client("publish", args) do
@@ -201,26 +201,26 @@ defmodule Ww.CLI do
     System.halt(1)
   end
 
-  def dashboard_endpoint(title) do
+  def canvas_endpoint(title) do
     %{
       kind: "tool",
       name: title,
       accepts: [
-        "dashboard.render.v1",
-        "dashboard.delta.v1",
-        "dashboard.patch.v1",
-        "dashboard.data.v1",
-        "dashboard.reply.v1",
-        "dashboard.clear.v1"
+        "canvas.render.v1",
+        "canvas.delta.v1",
+        "canvas.patch.v1",
+        "canvas.data.v1",
+        "canvas.reply.v1",
+        "canvas.clear.v1"
       ],
-      emits: ["dashboard.comment.v1", "dashboard.action.v1", "core.error.v1"],
-      metadata: %{tool: "dashboard"}
+      emits: ["canvas.comment.v1", "canvas.action.v1", "core.error.v1"],
+      metadata: %{tool: "canvas"}
     }
   end
 
   # The token rides in the fragment, which browsers never send to the server.
-  def dashboard_url(id, token),
-    do: base_url() <> "/dashboard#" <> URI.encode_query(%{"endpoint" => id, "token" => token})
+  def canvas_url(id, token),
+    do: base_url() <> "/canvas#" <> URI.encode_query(%{"endpoint" => id, "token" => token})
 
   @doc false
   def request(method, path, body \\ nil, extra_headers \\ [], authenticate \\ true) do
@@ -254,14 +254,14 @@ defmodule Ww.CLI do
   @doc false
   # A delta against the previously published page when under half the page's size, else the page.
   def page_message(html, previous, title) do
-    full = {"dashboard.render.v1", put_if(%{html: html}, :title, title)}
+    full = {"canvas.render.v1", put_if(%{html: html}, :title, title)}
 
     case previous do
       {old, base} ->
         delta = put_if(%{base: base, ops: line_delta(old, html)}, :title, title)
 
         if byte_size(Jason.encode!(delta)) * 2 < byte_size(html),
-          do: {"dashboard.delta.v1", delta},
+          do: {"canvas.delta.v1", delta},
           else: full
 
       nil ->
@@ -426,9 +426,9 @@ defmodule Ww.CLI do
     IO.puts("""
     ww serve [--name NODE] [--join NODE] [--port PORT] [--bind IP] [--allow-host HOST] [--mnesia-dir DIR]
     ww register --kind agent|tool --name NAME [--accepts TYPE] [--emits TYPE] [--metadata K=V]
-    ww dashboard [--title TITLE]
-    ww publish --to DASHBOARD_ID --file PAGE.html [--title TITLE] [--watch]  (--watch sends deltas)
-    ww fleet [--interval SECONDS] [--no-open]  (live dashboard of every endpoint)
+    ww canvas [--title TITLE]
+    ww publish --to CANVAS_ID --file PAGE.html [--title TITLE] [--watch]  (--watch sends deltas)
+    ww fleet [--interval SECONDS] [--no-open]  (live canvas of every endpoint)
     ww discover [--kind KIND] [--name NAME] [--accepts TYPE] [--online]
     ww inspect ENDPOINT_ID
     ww deregister ENDPOINT_ID  (deletes it and its messages; admin token, or self)

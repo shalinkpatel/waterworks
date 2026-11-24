@@ -1,4 +1,4 @@
-defmodule WwDashboardTest do
+defmodule WwCanvasTest do
   use ExUnit.Case, async: false
 
   alias Ww.TestHTTP
@@ -16,7 +16,7 @@ defmodule WwDashboardTest do
     :ok
   end
 
-  test "dashboard core logic passes its node tests" do
+  test "canvas core logic passes its node tests" do
     {output, status} = System.cmd("node", ["--test", "test/js/"], stderr_to_stdout: true)
     assert status == 0, output
   end
@@ -35,20 +35,20 @@ defmodule WwDashboardTest do
       assert apply_in_browser_code(old, ops) == new
     end
 
-    assert {"dashboard.render.v1", %{html: ^base}} = Ww.CLI.page_message(base, nil, nil)
+    assert {"canvas.render.v1", %{html: ^base}} = Ww.CLI.page_message(base, nil, nil)
 
-    assert {"dashboard.delta.v1", %{base: "msg_prev", ops: ops, title: "T"}} =
+    assert {"canvas.delta.v1", %{base: "msg_prev", ops: ops, title: "T"}} =
              Ww.CLI.page_message(edited, {base, "msg_prev"}, "T")
 
     assert apply_in_browser_code(base, ops) == edited
     # A rewrite is not worth a delta.
-    assert {"dashboard.render.v1", _} =
+    assert {"canvas.render.v1", _} =
              Ww.CLI.page_message("<h1>new</h1>", {base, "msg_prev"}, nil)
   end
 
   defp apply_in_browser_code(old, ops) do
     script = """
-    import { applyLineOps } from "./priv/dashboard/core.js";
+    import { applyLineOps } from "./priv/canvas/core.js";
     let input = "";
     for await (const chunk of process.stdin) input += chunk;
     const { old, ops } = JSON.parse(input);
@@ -66,12 +66,12 @@ defmodule WwDashboardTest do
   end
 
   @tag :transport
-  test "dashboard assets are served with a restrictive CSP, agent pages with a sandbox" do
-    for path <- ["/dashboard", "/dashboard/app.js", "/dashboard/core.js"] do
+  test "canvas assets are served with a restrictive CSP, agent pages with a sandbox" do
+    for path <- ["/canvas", "/canvas/app.js", "/canvas/core.js"] do
       assert csp(path) =~ "script-src 'self'"
     end
 
-    assert csp("/dashboard/frame") ==
+    assert csp("/canvas/frame") ==
              "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox"
   end
 
@@ -79,14 +79,14 @@ defmodule WwDashboardTest do
   @tag :browser
   @tag timeout: 120_000
   test "panel mode: real browser streams, comments on a region, shows replies, and survives reload" do
-    run_browser("test/support/dashboard_browser.mjs")
+    run_browser("test/support/canvas_browser.mjs")
   end
 
   @tag :transport
   @tag :browser
   @tag timeout: 120_000
   test "page mode: sandboxed agent HTML, streamed data, frame-aware comments, 5 MB republish, reload" do
-    run_browser("test/support/dashboard_page_browser.mjs")
+    run_browser("test/support/canvas_page_browser.mjs")
   end
 
   defp csp(path) do
@@ -98,8 +98,8 @@ defmodule WwDashboardTest do
   end
 
   defp run_browser(script) do
-    {agent, agent_token} = register(%{kind: "agent", name: "dashboard-agent"})
-    {dash, dash_token} = register(Ww.CLI.dashboard_endpoint("Fleet health"))
+    {agent, agent_token} = register(%{kind: "agent", name: "canvas-agent"})
+    {dash, dash_token} = register(Ww.CLI.canvas_endpoint("Fleet health"))
 
     {output, status} =
       System.cmd("node", [script],

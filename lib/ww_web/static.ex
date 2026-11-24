@@ -9,12 +9,12 @@ defmodule WwWeb.Static do
   @files %{
     "/demo" => {"demo/index.html", "text/html", @strict},
     "/demo/app.js" => {"demo/app.js", "text/javascript", @strict},
-    "/dashboard" => {"dashboard/index.html", "text/html", @strict},
-    "/dashboard/app.js" => {"dashboard/app.js", "text/javascript", @strict},
-    "/dashboard/core.js" => {"dashboard/core.js", "text/javascript", @strict},
-    "/dashboard/frame" => {"dashboard/frame.html", "text/html", @sandbox},
-    "/dashboard/frame.js" => {"dashboard/frame.js", "text/javascript", @sandbox},
-    "/dashboard/helper.js" => {"dashboard/helper.js", "text/javascript", @sandbox}
+    "/canvas" => {"canvas/index.html", "text/html", @strict},
+    "/canvas/app.js" => {"canvas/app.js", "text/javascript", @strict},
+    "/canvas/core.js" => {"canvas/core.js", "text/javascript", @strict},
+    "/canvas/frame" => {"canvas/frame.html", "text/html", @sandbox},
+    "/canvas/frame.js" => {"canvas/frame.js", "text/javascript", @sandbox},
+    "/canvas/helper.js" => {"canvas/helper.js", "text/javascript", @sandbox}
   }
 
   for {_route, {file, _type, _csp}} <- @files do

@@ -1,14 +1,14 @@
-// Pure dashboard state and geometry; app.js owns the DOM.
+// Pure canvas state and geometry; app.js owns the DOM.
 export const MAX_POINTS = 500;
 export const MAX_DATA = 1000;
 
 // `html` set means page mode: an agent-authored page in a sandboxed frame, `version` counts
-// its renders, and `data` holds the dashboard.data.v1 payloads streamed since the last one.
+// its renders, and `data` holds the canvas.data.v1 payloads streamed since the last one.
 // `revision` is the message id of the current page, the base a delta must name; `stale` records
 // the last delta that could not apply.
 export function emptyState() {
   return {
-    title: "Waterworks dashboard", panels: [], html: null, version: 0, revision: null, stale: null,
+    title: "Waterworks canvas", panels: [], html: null, version: 0, revision: null, stale: null,
     data: [], replies: [], cleared: { ids: [], before: 0 }, source: null, sequence: 0,
   };
 }
@@ -47,7 +47,7 @@ export function applyMessage(state, message) {
   const payload = message.payload || {};
 
   switch (message.type) {
-    case "dashboard.render.v1": {
+    case "canvas.render.v1": {
       const html = typeof payload.html === "string" ? payload.html : null;
       return {
         ...next,
@@ -62,7 +62,7 @@ export function applyMessage(state, message) {
       };
     }
 
-    case "dashboard.delta.v1": {
+    case "canvas.delta.v1": {
       const html = next.html !== null && payload.base === next.revision ? applyLineOps(next.html, payload.ops) : null;
       if (html === null) {
         return { ...next, stale: { id: message.id, from: message.from, base: payload.base, expected: next.revision } };
@@ -79,14 +79,14 @@ export function applyMessage(state, message) {
       };
     }
 
-    case "dashboard.data.v1":
+    case "canvas.data.v1":
       return {
         ...next,
         source: message.from,
         data: [...next.data, { id: message.id, sequence: message.sequence, payload }].slice(-MAX_DATA),
       };
 
-    case "dashboard.patch.v1": {
+    case "canvas.patch.v1": {
       let panels = next.panels;
       if (Array.isArray(payload.remove)) panels = panels.filter((p) => !payload.remove.includes(p.id));
       for (const panel of (payload.panels || []).filter(validPanel)) panels = upsert(panels, clampPanel(panel));
@@ -99,13 +99,13 @@ export function applyMessage(state, message) {
       };
     }
 
-    case "dashboard.clear.v1": {
+    case "canvas.clear.v1": {
       const ids = Array.isArray(payload.comments) ? payload.comments.filter((id) => typeof id === "string") : [];
       const before = payload.all === true ? Date.parse(message.received_at) || 0 : next.cleared.before;
       return { ...next, cleared: { ids: [...next.cleared.ids, ...ids], before: Math.max(before, next.cleared.before) } };
     }
 
-    case "dashboard.reply.v1":
+    case "canvas.reply.v1":
       return {
         ...next,
         replies: [...next.replies, { reply_to: message.reply_to, text: text(payload.text, ""), from: message.from }],
@@ -154,7 +154,7 @@ function appendPoints(panels, { panel: id, series: name, points, max }) {
   });
 }
 
-// Converts two client points into a region expressed as fractions of the dashboard.
+// Converts two client points into a region expressed as fractions of the canvas.
 export function regionFromPoints(a, b, bounds) {
   const clamp = (v) => Math.min(1, Math.max(0, v));
   const x1 = clamp((Math.min(a.x, b.x) - bounds.left) / bounds.width);

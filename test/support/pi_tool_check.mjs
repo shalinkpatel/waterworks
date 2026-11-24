@@ -1,4 +1,4 @@
-// Drives the extension's dashboard tools with a stub Pi API: open a dashboard, publish a file.
+// Drives the extension's canvas tools with a stub Pi API: open a canvas, publish a file.
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,10 +17,10 @@ const ctx = {
 };
 await handlers.get("session_start")({}, ctx);
 
-const opened = await tools.get("ww_dashboard_open").execute("open", { title: "Stub dashboard" }, undefined, undefined, ctx);
+const opened = await tools.get("ww_canvas_open").execute("open", { title: "Stub canvas" }, undefined, undefined, ctx);
 const { endpoint_id } = opened.details;
 const publish = (title) =>
-  tools.get("ww_dashboard_publish").execute("publish", { endpoint_id, path: "page.html", ...(title ? { title } : {}) }, undefined, undefined, ctx);
+  tools.get("ww_canvas_publish").execute("publish", { endpoint_id, path: "page.html", ...(title ? { title } : {}) }, undefined, undefined, ctx);
 writeFileSync(join(ctx.cwd, "page.html"), "<h1>from pi</h1>");
 const published = await publish("Pi page");
 

@@ -2,7 +2,7 @@
 // `addEventListener("waterworks", (event) => event.detail)`.
 (() => {
   const post = (data) => parent.postMessage({ source: "waterworks-frame", ...data }, "*");
-  // Page controls call waterworks.action({...}); the host sends it as dashboard.action.v1.
+  // Page controls call waterworks.action({...}); the host sends it as canvas.action.v1.
   window.waterworks = { action: (payload) => post({ kind: "action", payload }) };
   const root = document.documentElement;
   const size = () => post({ kind: "size", height: Math.max(root.scrollHeight, document.body?.scrollHeight || 0) });

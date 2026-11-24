@@ -1,7 +1,7 @@
 defmodule WwFleetTest do
   use ExUnit.Case, async: true
 
-  test "rows drop the dashboard itself, map type, status and cwd, and sort by id" do
+  test "rows drop the canvas itself, map type, status and cwd, and sort by id" do
     endpoints = [
       %{
         "id" => "ep_b",
@@ -23,7 +23,7 @@ defmodule WwFleetTest do
         "kind" => "tool",
         "online" => false,
         "metadata" => %{},
-        "accepts" => ["dashboard.render.v1"]
+        "accepts" => ["canvas.render.v1"]
       },
       %{
         "id" => "ep_c",
@@ -46,7 +46,7 @@ defmodule WwFleetTest do
                id: "ep_a",
                name: "dash",
                kind: "tool",
-               type: "dashboard",
+               type: "canvas",
                status: "offline",
                cwd: ""
              },
@@ -63,7 +63,7 @@ defmodule WwFleetTest do
            ]
   end
 
-  test "removals are honoured only for existing offline endpoints other than the dashboard" do
+  test "removals are honoured only for existing offline endpoints other than the canvas" do
     endpoints = [%{"id" => "ep_dead", "online" => false}, %{"id" => "ep_live", "online" => true}]
     assert Ww.Fleet.removable?(%{"action" => "remove", "id" => "ep_dead"}, endpoints, "ep_self")
     refute Ww.Fleet.removable?(%{"action" => "remove", "id" => "ep_live"}, endpoints, "ep_self")
