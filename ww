@@ -1,0 +1,10 @@
+#!/bin/sh
+# The ww CLI and daemon, run from this checkout's Mix release (MIX_ENV=prod mix release).
+# Symlink this file anywhere on PATH; it resolves the release next to the real script.
+self=$(readlink -f "$0") || exit 1
+rel="${WW_RELEASE:-$(dirname "$self")/_build/prod/rel/ww}"
+if [ ! -x "$rel/bin/ww" ]; then
+  echo "ww: no release at $rel (build it with: MIX_ENV=prod mix release)" >&2
+  exit 1
+fi
+exec "$rel/bin/ww" eval 'Ww.CLI.main(System.argv())' "$@"

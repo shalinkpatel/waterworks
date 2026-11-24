@@ -23,6 +23,4 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 ww-*.tar
 
-# Generated escript.
-/ww
 
