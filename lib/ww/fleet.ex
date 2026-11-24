@@ -13,6 +13,12 @@ defmodule Ww.Fleet do
       ones) from a subscriber: deregisters the endpoint; a connected one is disconnected.
     * `fleet.shutdown.v1 {id}` from a subscriber: sends `core.shutdown.v1` to an online
       endpoint, asking it to stop (each endpoint decides what that means).
+    * `fleet.remove_offline.v1 {}` from a subscriber: removes every offline endpoint except
+      current subscribers.
+    * `fleet.broadcast.v1 {ids, text}` from the fleet's own view only: sends `agent.prompt.v1
+      {text, delivery: "immediate"}` to each listed agent that is online, then reports
+      `fleet.broadcast_status.v1 {broadcast, text, sessions: [{id, name, status}]}` to the
+      view as sessions acknowledge (status: pending, acked, failed).
     * Canvases send the same as `canvas.action.v1 {action: "remove" | "disconnect" |
       "shutdown", id}`.
     * `core.shutdown.v1`: the fleet deregisters itself and its viewer and exits.
@@ -57,6 +63,7 @@ defmodule Ww.Fleet do
       interval: interval_ms,
       last: nil,
       fresh: [],
+      broadcasts: %{},
       viewer: viewer,
       subscribers: %{viewer => "fleet.state.v1"}
     }
@@ -83,10 +90,18 @@ defmodule Ww.Fleet do
         "fleet.remove.v1",
         "fleet.disconnect.v1",
         "fleet.shutdown.v1",
+        "fleet.remove_offline.v1",
+        "fleet.broadcast.v1",
         "canvas.action.v1",
         "core.shutdown.v1"
       ],
-      emits: ["fleet.state.v1", "canvas.data.v1", "core.shutdown.v1"],
+      emits: [
+        "fleet.state.v1",
+        "fleet.broadcast_status.v1",
+        "canvas.data.v1",
+        "core.shutdown.v1",
+        "agent.prompt.v1"
+      ],
       metadata: %{tool: "fleet"}
     }
   end
@@ -95,8 +110,15 @@ defmodule Ww.Fleet do
     %{
       kind: "tool",
       name: "fleet view",
-      accepts: ["fleet.state.v1", "core.shutdown.v1"],
-      emits: ["fleet.subscribe.v1", "fleet.remove.v1", "fleet.disconnect.v1", "fleet.shutdown.v1"],
+      accepts: ["fleet.state.v1", "fleet.broadcast_status.v1", "core.shutdown.v1"],
+      emits: [
+        "fleet.subscribe.v1",
+        "fleet.remove.v1",
+        "fleet.remove_offline.v1",
+        "fleet.broadcast.v1",
+        "fleet.disconnect.v1",
+        "fleet.shutdown.v1"
+      ],
       metadata: %{tool: "fleet-view"}
     }
   end
@@ -119,6 +141,7 @@ defmodule Ww.Fleet do
 
   # Sends the list to everyone when it changed, and to new subscribers regardless.
   defp poll(state) do
+    state = refresh_broadcasts(state)
     endpoints = endpoints(state)
     current = rows(endpoints)
     targets = if current != state.last, do: Map.keys(state.subscribers), else: state.fresh
@@ -168,7 +191,7 @@ defmodule Ww.Fleet do
 
   # Decided against a fresh listing, so "online"/"offline" reflects the moment of the click.
   defp handle_message(state, message) do
-    case command(message, state.subscribers, endpoints(state), state.id) do
+    case command(message, state.subscribers, endpoints(state), state.id, state.viewer) do
       {:subscribe, to, type} ->
         poll(%{put_in(state.subscribers[to], type) | fresh: [to | state.fresh]})
 
@@ -178,9 +201,17 @@ defmodule Ww.Fleet do
       {:remove, id} ->
         if remove(state, id), do: poll(state), else: state
 
+      {:remove_all, ids} ->
+        removed = Enum.count(ids, &remove(state, &1))
+        IO.puts(:stderr, "removed #{removed} offline endpoint(s)")
+        if removed > 0, do: poll(state), else: state
+
       {:shutdown, id} ->
         request_shutdown(state, id, message["from"])
         state
+
+      {:broadcast, ids, text} ->
+        broadcast(state, message, ids, text)
 
       :exit ->
         exit_fleet(state, message["from"])
@@ -241,6 +272,89 @@ defmodule Ww.Fleet do
     tail(parent, auth)
   end
 
+  # delivery: "immediate" makes a Pi session take it as a prompt now (queued types wait).
+  # Each send is tracked so the view can show which sessions acknowledged it; the broadcast id
+  # is the request's message id, which the page chose and uses to match status updates.
+  defp broadcast(state, request, ids, text) do
+    names = Map.new(endpoints(state), &{&1["id"], &1["name"]})
+
+    sessions =
+      for id <- ids do
+        message_id = "#{request["id"]}.#{id}"
+        payload = %{text: text, delivery: "immediate"}
+        body = %{id: message_id, to: id, type: "agent.prompt.v1", payload: payload}
+
+        status =
+          try do
+            CLI.request(:post, "/v1/messages", body, state.auth, false)
+            "pending"
+          rescue
+            error ->
+              IO.puts(:stderr, "broadcast to #{id} failed: #{Exception.message(error)}")
+              "failed"
+          end
+
+        %{id: id, name: names[id] || id, message_id: message_id, status: status}
+      end
+
+    IO.puts(:stderr, "broadcast to #{length(ids)} agent(s)")
+
+    tracked = %{
+      id: request["id"],
+      to: request["from"],
+      text: text,
+      sessions: sessions,
+      started: System.monotonic_time(:second)
+    }
+
+    report_broadcast(state, tracked)
+    put_in(state.broadcasts[tracked.id], tracked)
+  end
+
+  # Called every poll: re-reads pending sends and reports changes. Gives up after 10 minutes
+  # (a session that never acknowledges stays "pending" in the view).
+  defp refresh_broadcasts(state) do
+    broadcasts =
+      for {id, b} <- state.broadcasts,
+          System.monotonic_time(:second) - b.started < 600,
+          Enum.any?(b.sessions, &(&1.status == "pending")),
+          into: %{} do
+        sessions = Enum.map(b.sessions, &refresh_session(state, &1))
+        updated = %{b | sessions: sessions}
+        if sessions != b.sessions, do: report_broadcast(state, updated)
+        {id, updated}
+      end
+
+    %{state | broadcasts: broadcasts}
+  end
+
+  defp refresh_session(state, %{status: "pending"} = session) do
+    path = "/v1/messages/#{URI.encode(session.message_id)}"
+
+    case CLI.request(:get, path, nil, state.auth, false) do
+      %{"status" => "acked"} -> %{session | status: "acked"}
+      _ -> session
+    end
+  rescue
+    # Deregistered recipients take their messages with them.
+    _ -> %{session | status: "failed"}
+  end
+
+  defp refresh_session(_state, session), do: session
+
+  defp report_broadcast(state, b) do
+    payload = %{
+      broadcast: b.id,
+      text: b.text,
+      sessions: Enum.map(b.sessions, &Map.take(&1, [:id, :name, :status]))
+    }
+
+    body = %{to: b.to, type: "fleet.broadcast_status.v1", payload: payload}
+    CLI.request(:post, "/v1/messages", body, state.auth, false)
+  rescue
+    _ -> :ok
+  end
+
   defp request_shutdown(state, id, requested_by) do
     body = %{to: id, type: "core.shutdown.v1", payload: %{requested_by: requested_by}}
     CLI.request(:post, "/v1/messages", body, state.auth, false)
@@ -271,6 +385,7 @@ defmodule Ww.Fleet do
     "fleet.remove.v1" => "remove",
     "fleet.disconnect.v1" => "disconnect",
     "fleet.shutdown.v1" => "shutdown",
+    "fleet.remove_offline.v1" => "remove_offline",
     "canvas.action.v1" => nil
   }
 
@@ -280,11 +395,37 @@ defmodule Ww.Fleet do
   online, and the fleet never removes itself (it only exits on a shutdown). A sender
   may subscribe itself or a canvas, but not other kinds of endpoint.
   """
-  def command(%{"type" => type, "from" => from} = message, subscribers, endpoints, self_id) do
+  def command(
+        %{"type" => type, "from" => from} = message,
+        subscribers,
+        endpoints,
+        self_id,
+        viewer \\ nil
+      ) do
     payload = message["payload"] || %{}
     target = payload["to"] || from
 
     case type do
+      # Prompts agents, so only the fleet's own first-party view may ask: canvases forward
+      # actions from agent-authored pages, which can load third-party scripts.
+      "fleet.broadcast.v1" ->
+        text = payload["text"]
+        ids = if is_list(payload["ids"]), do: payload["ids"], else: []
+
+        online_agents =
+          for e <- endpoints,
+              e["kind"] == "agent",
+              e["online"] == true,
+              into: MapSet.new(),
+              do: e["id"]
+
+        targets = Enum.filter(ids, &MapSet.member?(online_agents, &1)) |> Enum.uniq()
+
+        if from == viewer and viewer != nil and is_binary(text) and String.trim(text) != "" and
+             String.length(text) <= 10_000 and targets != [],
+           do: {:broadcast, targets, text},
+           else: :ignore
+
       "fleet.subscribe.v1" ->
         case Enum.find(endpoints, &(&1["id"] == target)) do
           %{"accepts" => accepts} ->
@@ -310,7 +451,11 @@ defmodule Ww.Fleet do
         target = Enum.find(endpoints, &(&1["id"] == id))
 
         cond do
-          not Map.has_key?(subscribers, from) or is_nil(target) -> :ignore
+          not Map.has_key?(subscribers, from) -> :ignore
+          # Every offline endpoint except current subscribers (e.g. the fleet's own viewer,
+          # which stays reopenable after its tab closes).
+          action == "remove_offline" -> {:remove_all, offline_ids(endpoints, subscribers)}
+          is_nil(target) -> :ignore
           # Shutting the fleet down from its own view is allowed; removing it is not.
           action == "shutdown" and id == self_id -> :exit
           id == self_id -> :ignore
@@ -324,6 +469,15 @@ defmodule Ww.Fleet do
         :ignore
     end
   end
+
+  defp offline_ids(endpoints, subscribers),
+    do:
+      for(
+        e <- endpoints,
+        e["online"] == false,
+        not Map.has_key?(subscribers, e["id"]),
+        do: e["id"]
+      )
 
   @doc "Page rows for every endpoint, in a stable order."
   def rows(endpoints) do

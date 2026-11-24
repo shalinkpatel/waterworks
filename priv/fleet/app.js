@@ -9,6 +9,7 @@ let socket = null;
 
 function apply(state) {
   if (!Array.isArray(state?.endpoints)) return;
+  pending.delete("remove_offline");
   endpoints = state.endpoints;
   updated = state.updated || "live";
   fleetId = state.fleet || fleetId;
@@ -24,7 +25,7 @@ function requestAction(action, id) {
   }
 }
 
-const cols = ["name", "kind", "type", "status", "id", "cwd"];
+const cols = ["name", "kind", "type", "status", "id"];
 const filters = { kind: new Set(), type: new Set(), status: new Set() };  // empty = all
 let sort = { col: "status", dir: -1 };                    // online first
 
@@ -90,10 +91,100 @@ function actions(e) {
   return cell;
 }
 
+// Toolbar: remove every offline endpoint at once (two clicks, like the row buttons). The fleet
+// keeps its current subscribers, such as this view.
+function removeOfflineButton() {
+  const b = $("remove-offline");
+  const count = endpoints.filter((e) => e.status === "offline").length;
+  b.hidden = count === 0;
+  if (b.classList.contains("armed")) return;
+  b.disabled = pending.has("remove_offline");
+  b.textContent = b.disabled ? "Removing offline…" : `Remove all offline (${count})`;
+  b.onclick = () => {
+    if (!b.classList.contains("armed")) {
+      b.classList.add("armed"); b.textContent = `Confirm: remove ${count} offline`;
+      setTimeout(() => { if (!b.disabled) { b.classList.remove("armed"); removeOfflineButton(); } }, 3000);
+      return;
+    }
+    b.classList.remove("armed");
+    pending.add("remove_offline");
+    requestAction("remove_offline", null);
+    render();
+  };
+}
+
+// Broadcast (standalone view only: the fleet refuses broadcasts relayed through canvases).
+// Online agents can be selected; the message goes to each as agent.prompt.v1, and the fleet
+// reports receipts (fleet.broadcast_status.v1) that fill the modal as sessions acknowledge.
+const selected = new Set();
+const canBroadcast = () => Boolean(socket);
+const selectable = (e) => e.kind === "agent" && e.status === "online";
+
+function pickCell(e) {
+  const td = el("td", { className: "pick" });
+  if (canBroadcast() && selectable(e)) {
+    const box = el("input", { type: "checkbox", checked: selected.has(e.id) });
+    box.setAttribute("aria-label", `Select ${e.name}`);
+    box.onchange = () => { box.checked ? selected.add(e.id) : selected.delete(e.id); render(); };
+    td.append(box);
+  }
+  return td;
+}
+
+function pickAllCell() {
+  const th = el("th", { className: "pick", scope: "col" });
+  const live = endpoints.filter(selectable);
+  if (canBroadcast() && live.length) {
+    const box = el("input", { type: "checkbox", checked: live.every((e) => selected.has(e.id)) });
+    box.setAttribute("aria-label", "Select all online agents");
+    box.onchange = () => { live.forEach((e) => (box.checked ? selected.add(e.id) : selected.delete(e.id))); render(); };
+    th.append(box);
+  }
+  return th;
+}
+
+function composer() {
+  // Drop selections that went offline or were removed.
+  for (const id of selected) if (!endpoints.some((e) => e.id === id && selectable(e))) selected.delete(id);
+  $("composer").hidden = !canBroadcast() || selected.size === 0;
+  $("who").textContent = `${selected.size} session${selected.size === 1 ? "" : "s"}`;
+}
+
+let receipt = null; // id of the broadcast shown in the modal
+$("broadcast-send").onclick = () => {
+  const text = $("broadcast-text").value.trim();
+  if (!text || !selected.size || !socket) return;
+  receipt = `msg_${crypto.randomUUID()}`;
+  const names = endpoints.filter((e) => selected.has(e.id));
+  socket.send(JSON.stringify({ op: "send", id: receipt, to: fleetId, type: "fleet.broadcast.v1", payload: { ids: [...selected], text } }));
+  showReceipts({ broadcast: receipt, text, sessions: names.map((e) => ({ id: e.id, name: e.name, status: "sending" })) });
+  $("broadcast-text").value = "";
+  selected.clear();
+  render();
+};
+$("broadcast-clear").onclick = () => { selected.clear(); render(); };
+$("broadcast-text").onkeydown = (ev) => { if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) $("broadcast-send").click(); };
+$("receipts-close").onclick = () => $("receipts").close();
+
+function showReceipts(status) {
+  if (status.broadcast !== receipt) return;
+  const label = { sending: "sending…", pending: "waiting", acked: "received ✓", failed: "failed" };
+  const acked = status.sessions.filter((s) => s.status === "acked").length;
+  $("receipts-text").textContent = status.text;
+  $("receipts-tally").textContent = `${acked} of ${status.sessions.length} acknowledged`;
+  $("receipts-list").replaceChildren(...status.sessions.map((s) => {
+    const li = el("li");
+    const cls = s.status === "sending" ? "pending" : s.status;
+    li.append(el("span", {}, s.name), el("span", { className: `badge ${cls}` }, label[s.status] || s.status));
+    return li;
+  }));
+  if (!$("receipts").open) $("receipts").showModal();
+}
+
 function render() {
-  stats(); chips();
+  stats(); chips(); removeOfflineButton(); composer();
   $("updated").textContent = updated;
-  $("head").replaceChildren(...cols.map((c) => {
+  $("head").replaceChildren(pickAllCell(), ...cols.map((c) => {
     const th = el("th", { scope: "col", tabIndex: 0 }, c);
     if (sort.col === c) th.setAttribute("aria-sort", sort.dir > 0 ? "ascending" : "descending");
     th.onclick = th.onkeydown = (ev) => {
@@ -105,17 +196,17 @@ function render() {
   const q = $("q").value.toLowerCase();
   const rows = endpoints
     .filter((e) => Object.entries(filters).every(([k, set]) => !set.size || set.has(e[k])))
-    .filter((e) => !q || [e.name, e.id, e.cwd].some((v) => v.toLowerCase().includes(q)))
+    .filter((e) => !q || [e.name, e.id].some((v) => v.toLowerCase().includes(q)))
     .sort((a, b) => sort.dir * a[sort.col].localeCompare(b[sort.col]) || a.name.localeCompare(b.name));
   $("rows").replaceChildren(...(rows.length ? rows.map((e) => {
     const tr = el("tr");
     tr.append(
+      pickCell(e),
       el("td", {}, e.name),
       el("td", {}, "").appendChild(el("span", { className: `badge ${e.kind}` }, e.kind)).parentNode,
       el("td", { className: "mono" }, e.type),
       el("td", {}, "").appendChild(el("span", { className: `badge ${e.status}` }, e.status)).parentNode,
       el("td", { className: "mono" }, e.id),
-      el("td", { className: "mono" }, e.cwd || "—"),
       actions(e),
     );
     return tr;
@@ -162,6 +253,7 @@ if (params.get("endpoint") && params.get("token")) {
       if (frame.op !== "message") return;
       ws.send(JSON.stringify({ op: "ack", id: frame.message.id }));
       if (frame.message.type === "fleet.state.v1") apply(frame.message.payload);
+      if (frame.message.type === "fleet.broadcast_status.v1") showReceipts(frame.message.payload);
       if (frame.message.type === "core.shutdown.v1") stop("shut down");
     };
     ws.onclose = (event) => {

@@ -126,6 +126,17 @@ defmodule WwWeb.Router do
   end
 
   # Bodies (up to 17 MB) are only read once the caller is authenticated.
+  # Lets a sender see whether its message was acknowledged (e.g. broadcast receipts).
+  get "/v1/messages/:message_id" do
+    case Ww.message_status(header(conn, "x-ww-endpoint"), bearer_token(conn), message_id) do
+      {:ok, message, status} ->
+        json(conn, 200, %{message: Ww.Wire.message(message), status: status})
+
+      {:error, reason} ->
+        error(conn, reason)
+    end
+  end
+
   post "/v1/messages" do
     from = header(conn, "x-ww-endpoint")
 

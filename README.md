@@ -208,6 +208,7 @@ Registration instead uses `X-WW-Admin-Token`.
 | Discover | `GET /v1/endpoints` |
 | Inspect | `GET /v1/endpoints/:id` |
 | Send | `POST /v1/messages` |
+| Message status (sender or recipient) | `GET /v1/messages/:id` |
 | History | `GET /v1/endpoints/:id/history` |
 | Streaming tail | `GET /v1/endpoints/:id/tail` |
 | Acknowledge | `POST /v1/endpoints/:id/ack` |
@@ -365,8 +366,15 @@ Messages: `fleet.subscribe.v1 {to?}` (yourself, or a canvas), `fleet.unsubscribe
 sends the same as `canvas.action.v1 {action, id}`. Subscribers receive `fleet.state.v1` (canvases:
 `canvas.data.v1`) with `{fleet, endpoints: [{name, kind, type, status, id, cwd}],
 updated}`. Offline rows have Remove; online rows have Shut down and Disconnect (click twice
-to confirm). Shutting the fleet down from its own row (or sending it
+to confirm). **Remove all offline** in the toolbar (`fleet.remove_offline.v1`) clears
+every offline endpoint except the fleet's current subscribers, such as its viewer. Shutting the fleet down from its own row (or sending it
 `core.shutdown.v1`) deregisters the fleet and its viewer and exits.
+
+**Broadcast** (standalone view only): tick online agents, type a message, and Send
+(or Cmd/Ctrl+Enter). The fleet sends each `agent.prompt.v1 {text, delivery:
+"immediate"}`, so Pi sessions take it as a prompt now, and a modal shows which
+sessions have acknowledged it, live. The fleet refuses broadcasts relayed through
+canvases, since a canvas forwards actions from agent-authored pages.
 
 `core.shutdown.v1` asks an endpoint to stop; each decides what that means. A Pi
 session never exits for a remote message: it deregisters itself and leaves the

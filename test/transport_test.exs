@@ -135,6 +135,47 @@ defmodule WwTransportTest do
                TestHTTP.auth(agent.id, agent_token)
              )
 
+    # Receipts: sender and recipient can see a message's status; others cannot.
+    assert {201, %{"message" => %{"id" => sent_id}}} =
+             TestHTTP.request(
+               :post,
+               "/v1/messages",
+               %{to: other.id, type: "x.v1", payload: %{}},
+               TestHTTP.auth(agent.id, agent_token)
+             )
+
+    assert {200, %{"status" => "pending"}} =
+             TestHTTP.request(
+               :get,
+               "/v1/messages/#{sent_id}",
+               nil,
+               TestHTTP.auth(agent.id, agent_token)
+             )
+
+    assert {200, _} =
+             TestHTTP.request(
+               :post,
+               "/v1/endpoints/#{other.id}/ack",
+               %{id: sent_id},
+               TestHTTP.auth(other.id, other_token)
+             )
+
+    assert {200, %{"status" => "acked"}} =
+             TestHTTP.request(
+               :get,
+               "/v1/messages/#{sent_id}",
+               nil,
+               TestHTTP.auth(agent.id, agent_token)
+             )
+
+    assert {404, _} =
+             TestHTTP.request(
+               :get,
+               "/v1/messages/#{sent_id}",
+               nil,
+               TestHTTP.auth(victim.id, victim_token)
+             )
+
     # Rename: only yourself, and only name/metadata.
     assert {401, _} =
              TestHTTP.request(
