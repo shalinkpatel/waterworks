@@ -162,3 +162,10 @@ test("line paths share bounds", () => {
   assert.equal(paths[0].d, "M0.0,50.0L100.0,0.0");
   assert.deepEqual(linePaths([], 10, 10), { paths: [], min: 0, max: 0 });
 });
+
+test("data from a tool does not take the page (comments still reach the renderer)", () => {
+  let state = applyMessage(emptyState(), msg(1, "canvas.render.v1", { html: "<p>fleet</p>" }));
+  state = applyMessage(state, msg(2, "canvas.data.v1", { endpoints: [] }, { from: "ep_fleet" }));
+  assert.equal(state.source, "ep_agent");
+  assert.equal(state.data.length, 1);
+});

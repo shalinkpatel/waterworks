@@ -130,10 +130,12 @@ defmodule Ww.CLI do
     if opts[:watch], do: watch(file, published, publish)
   end
 
+  defp client("fleet", ["page"]), do: IO.write(Ww.Fleet.canvas_page())
+
   defp client("fleet", args) do
     {opts, _, invalid} = OptionParser.parse(args, switches: [interval: :integer, open: :boolean])
     if invalid != [], do: raise("invalid options: #{inspect(invalid)}")
-    Ww.Fleet.run((opts[:interval] || 5) * 1000, Keyword.get(opts, :open, true))
+    Ww.Fleet.run((opts[:interval] || 2) * 1000, Keyword.get(opts, :open, true))
   end
 
   defp client("discover", args) do
@@ -428,7 +430,8 @@ defmodule Ww.CLI do
     ww register --kind agent|tool --name NAME [--accepts TYPE] [--emits TYPE] [--metadata K=V]
     ww canvas [--title TITLE]
     ww publish --to CANVAS_ID --file PAGE.html [--title TITLE] [--watch]  (--watch sends deltas)
-    ww fleet [--interval SECONDS] [--no-open]  (live canvas of every endpoint)
+    ww fleet [--interval SECONDS] [--no-open]  (fleet tool + standalone view at /fleet)
+    ww fleet page  (prints the fleet view as one page, to publish into a canvas)
     ww discover [--kind KIND] [--name NAME] [--accepts TYPE] [--online]
     ww inspect ENDPOINT_ID
     ww deregister ENDPOINT_ID  (deletes it and its messages; admin token, or self)

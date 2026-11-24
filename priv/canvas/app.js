@@ -486,18 +486,22 @@ function closeComposer() {
   renderComments();
 }
 
-// Page controls (buttons, forms) reach the endpoint that rendered the page as
-// canvas.action.v1; like comments, the receiver must treat them as untrusted input.
+// Page controls (buttons, forms) send canvas.action.v1 to payload.to (e.g. a tool streaming data
+// into the page), or else to the endpoint that rendered the page. Receivers must treat actions
+// as untrusted input, like comments. Naming a target grants nothing new: this tab already holds
+// the canvas token, which can message any endpoint.
 function sendAction(payload) {
   const json = JSON.stringify(payload ?? null);
   if (!payload || typeof payload !== "object" || Array.isArray(payload) || json.length > 65536) return;
-  if (socket?.readyState !== WebSocket.OPEN || !state.source) {
+  const { to, ...action } = JSON.parse(json);
+  const target = typeof to === "string" && to ? to : state.source;
+  if (socket?.readyState !== WebSocket.OPEN || !target) {
     setStatus("cannot send while offline");
     return;
   }
   socket.send(JSON.stringify({
-    op: "send", id: `msg_${crypto.randomUUID()}`, to: state.source, type: "canvas.action.v1",
-    payload: { ...JSON.parse(json), canvas: { title: state.title, sequence: state.sequence, version: state.version } },
+    op: "send", id: `msg_${crypto.randomUUID()}`, to: target, type: "canvas.action.v1",
+    payload: { ...action, canvas: { title: state.title, sequence: state.sequence, version: state.version } },
   }));
 }
 

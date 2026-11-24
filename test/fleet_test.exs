@@ -1,25 +1,20 @@
 defmodule WwFleetTest do
   use ExUnit.Case, async: true
 
-  test "rows drop the canvas itself, map type, status and cwd, and sort by id" do
+  alias Ww.Fleet
+
+  test "rows map type, status and cwd, inferring type for older endpoints, sorted by id" do
     endpoints = [
       %{
         "id" => "ep_b",
-        "name" => "pi-1",
+        "name" => "fix auth",
         "kind" => "agent",
         "online" => true,
         "metadata" => %{"cwd" => "/w", "harness" => "claude"}
       },
       %{
-        "id" => "ep_self",
-        "name" => "Waterworks fleet",
-        "kind" => "tool",
-        "online" => true,
-        "metadata" => %{}
-      },
-      %{
         "id" => "ep_a",
-        "name" => "dash",
+        "name" => "page",
         "kind" => "tool",
         "online" => false,
         "metadata" => %{},
@@ -27,48 +22,94 @@ defmodule WwFleetTest do
       },
       %{
         "id" => "ep_c",
-        "name" => "pi-9",
+        "name" => "ww",
         "kind" => "agent",
         "online" => false,
-        "metadata" => %{}
+        "metadata" => %{},
+        "accepts" => ["demo.echo.v1"]
       },
       %{
         "id" => "ep_d",
         "name" => "x",
         "kind" => "tool",
         "online" => false,
-        "metadata" => %{"tool" => "echo"}
+        "metadata" => %{"tool" => "fleet"}
+      },
+      %{
+        "id" => "ep_e",
+        "name" => "old",
+        "kind" => "tool",
+        "online" => false,
+        "metadata" => %{},
+        "accepts" => ["dashboard.render.v1"]
       }
     ]
 
-    assert Ww.Fleet.rows(endpoints, "ep_self") == [
-             %{
-               id: "ep_a",
-               name: "dash",
-               kind: "tool",
-               type: "canvas",
-               status: "offline",
-               cwd: ""
-             },
-             %{
-               id: "ep_b",
-               name: "pi-1",
-               kind: "agent",
-               type: "claude",
-               status: "online",
-               cwd: "/w"
-             },
-             %{id: "ep_c", name: "pi-9", kind: "agent", type: "pi", status: "offline", cwd: ""},
-             %{id: "ep_d", name: "x", kind: "tool", type: "echo", status: "offline", cwd: ""}
+    assert Enum.map(Fleet.rows(endpoints), &{&1.id, &1.type, &1.status, &1.cwd}) == [
+             {"ep_a", "canvas", "offline", ""},
+             {"ep_b", "claude", "online", "/w"},
+             {"ep_c", "pi", "offline", ""},
+             {"ep_d", "fleet", "offline", ""},
+             {"ep_e", "dashboard (legacy)", "offline", ""}
            ]
   end
 
-  test "removals are honoured only for existing offline endpoints other than the canvas" do
-    endpoints = [%{"id" => "ep_dead", "online" => false}, %{"id" => "ep_live", "online" => true}]
-    assert Ww.Fleet.removable?(%{"action" => "remove", "id" => "ep_dead"}, endpoints, "ep_self")
-    refute Ww.Fleet.removable?(%{"action" => "remove", "id" => "ep_live"}, endpoints, "ep_self")
-    refute Ww.Fleet.removable?(%{"action" => "remove", "id" => "ep_gone"}, endpoints, "ep_self")
-    refute Ww.Fleet.removable?(%{"action" => "remove", "id" => "ep_dead"}, endpoints, "ep_dead")
-    refute Ww.Fleet.removable?(%{"action" => "nuke", "id" => "ep_dead"}, endpoints, "ep_self")
+  @endpoints [
+    %{"id" => "ep_agent", "accepts" => ["demo.echo.v1"], "online" => true},
+    %{"id" => "ep_canvas", "accepts" => ["canvas.data.v1"], "online" => true},
+    %{"id" => "ep_view", "accepts" => ["fleet.state.v1"], "online" => true},
+    %{"id" => "ep_dead", "accepts" => [], "online" => false}
+  ]
+
+  defp command(type, from, payload, subscribers \\ %{}),
+    do:
+      Fleet.command(
+        %{"type" => type, "from" => from, "payload" => payload},
+        subscribers,
+        @endpoints,
+        "ep_fleet"
+      )
+
+  test "subscribe: canvases get canvas.data.v1, a sender can subscribe itself, nothing else" do
+    assert command("fleet.subscribe.v1", "ep_agent", %{"to" => "ep_canvas"}) ==
+             {:subscribe, "ep_canvas", "canvas.data.v1"}
+
+    assert command("fleet.subscribe.v1", "ep_view", %{}) ==
+             {:subscribe, "ep_view", "fleet.state.v1"}
+
+    assert command("fleet.subscribe.v1", "ep_agent", %{"to" => "ep_view"}) == :ignore
+    assert command("fleet.subscribe.v1", "ep_agent", %{"to" => "ep_missing"}) == :ignore
+  end
+
+  test "remove: only subscribers, only existing offline endpoints, never the fleet" do
+    subs = %{"ep_view" => "fleet.state.v1", "ep_canvas" => "canvas.data.v1"}
+
+    assert command("fleet.remove.v1", "ep_view", %{"id" => "ep_dead"}, subs) ==
+             {:remove, "ep_dead"}
+
+    assert command(
+             "canvas.action.v1",
+             "ep_canvas",
+             %{"action" => "remove", "id" => "ep_dead"},
+             subs
+           ) ==
+             {:remove, "ep_dead"}
+
+    assert command("fleet.remove.v1", "ep_agent", %{"id" => "ep_dead"}, subs) == :ignore
+    assert command("fleet.remove.v1", "ep_view", %{"id" => "ep_agent"}, subs) == :ignore
+    assert command("fleet.remove.v1", "ep_view", %{"id" => "ep_fleet"}, subs) == :ignore
+
+    assert command(
+             "canvas.action.v1",
+             "ep_canvas",
+             %{"action" => "nuke", "id" => "ep_dead"},
+             subs
+           ) == :ignore
+  end
+
+  test "the canvas page inlines the view script" do
+    page = Fleet.canvas_page()
+    refute page =~ ~s(src="/fleet/app.js")
+    assert page =~ "fleet.remove.v1"
   end
 end

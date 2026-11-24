@@ -334,20 +334,39 @@ by agent". A reload rebuilds the page, clears included, from the endpoint's
 mailbox history.
 
 Page controls can call `waterworks.action({...})` (any JSON object up to 64 KB);
-the host sends it as `canvas.action.v1` to the endpoint that last rendered
-the page. Like comment fields, treat action payloads as untrusted input.
+the host sends it as `canvas.action.v1` to `to` when given (e.g. a tool streaming
+into the page), otherwise to the endpoint that last rendered the page. Like comment fields, treat action payloads as untrusted input.
 
-### Fleet canvas
+## Example tool: fleet
 
-`ww fleet` registers a canvas showing every registered agent and tool, with
-counts, sorting, kind/type/status filters, and search. It needs `WW_ADMIN_TOKEN`,
-prints and opens the canvas URL (`--no-open` to skip), publishes the page
-once, and sends `canvas.data.v1` only when the fleet changes (polled every
-`--interval` seconds, default 5). Its Type column reads `metadata.harness` for agents (the Pi adapter
-sets `pi`) and `metadata.tool` for tools (canvases set `canvas`); register
-your own with `--metadata harness=...` or `--metadata tool=...`. Offline rows
-have a Remove button (click twice to confirm); `ww fleet` deletes only endpoints
-that exist and are offline, along with their messages.
+`ww fleet` is a tool endpoint (`metadata.tool: "fleet"`) that tracks every
+registered agent and tool and streams the list to subscribers whenever it
+changes (polled every `--interval` seconds, default 2). It needs
+`WW_ADMIN_TOKEN` and owns no canvas.
+
+- **Standalone view:** it registers a viewer endpoint and opens
+  `/fleet#endpoint=…&token=…&fleet=…` (`--no-open` to skip): counts, sorting,
+  kind/type/status filters, search, and a light/dark toggle.
+- **On a canvas:** to comment on the fleet with an agent, publish the same view
+  into a canvas the agent owns and subscribe that canvas. Data streamed into a
+  canvas does not change who owns it, so comments still go to the agent:
+
+  ```sh
+  ./ww fleet page > fleet.html        # the view as one self-contained page
+  # agent: ww_canvas_publish fleet.html to its canvas, then
+  # ww_send to the fleet: fleet.subscribe.v1 {"to": "<canvas id>"}
+  ```
+
+Messages: `fleet.subscribe.v1 {to?}` (yourself, or a canvas), `fleet.unsubscribe.v1
+{to?}`, and `fleet.remove.v1 {id}` (or `canvas.action.v1 {action: "remove", id}`
+from a subscribed canvas). Subscribers receive `fleet.state.v1` (canvases:
+`canvas.data.v1`) with `{fleet, endpoints: [{name, kind, type, status, id, cwd}],
+updated}`. Offline rows have a Remove button (click twice to confirm); the fleet
+removes only endpoints that exist and are offline, and only for subscribers.
+
+The Type column reads `metadata.harness` for agents (the Pi adapter sets `pi`)
+and `metadata.tool` for tools (canvases set `canvas`); register your own with
+`--metadata harness=...` or `--metadata tool=...`.
 
 ## Tests
 

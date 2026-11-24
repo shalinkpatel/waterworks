@@ -79,10 +79,11 @@ export function applyMessage(state, message) {
       };
     }
 
+    // Data never changes who owns the page: a tool can stream into a canvas an agent rendered,
+    // and comments still reach the agent.
     case "canvas.data.v1":
       return {
         ...next,
-        source: message.from,
         data: [...next.data, { id: message.id, sequence: message.sequence, payload }].slice(-MAX_DATA),
       };
 
