@@ -190,6 +190,32 @@ defmodule WwFleetTest do
              :ignore
   end
 
+  test "rows mark subscribers as kept; history is newest first" do
+    [row] =
+      Fleet.rows(
+        [%{"id" => "ep_v", "name" => "fleet view", "kind" => "tool", "online" => false}],
+        %{"ep_v" => "fleet.state.v1"}
+      )
+
+    assert row.kept
+
+    old = %{
+      id: "b1",
+      text: "first",
+      sent_at: "t1",
+      started: 1,
+      sessions: [%{id: "a", name: "x", status: "acked", message_id: "m"}]
+    }
+
+    new = %{old | id: "b2", text: "second", started: 2}
+
+    assert [
+             %{broadcast: "b2", text: "second"},
+             %{broadcast: "b1", sessions: [%{id: "a", name: "x", status: "acked"}]}
+           ] =
+             Fleet.history(%{"b1" => old, "b2" => new})
+  end
+
   test "the canvas page inlines the view script" do
     page = Fleet.canvas_page()
     refute page =~ ~s(src="/fleet/app.js")

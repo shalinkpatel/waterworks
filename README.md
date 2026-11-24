@@ -373,7 +373,9 @@ every offline endpoint except the fleet's current subscribers, such as its viewe
 **Broadcast** (standalone view, or the view published into a canvas): tick online agents, type a message, and Send
 (or Cmd/Ctrl+Enter). The fleet sends each `agent.prompt.v1 {text, delivery:
 "immediate"}`, so Pi sessions take it as a prompt now, and a modal shows which
-sessions have acknowledged it, live. Through a canvas this relies on
+sessions have acknowledged it, live. The **Broadcasts** tab lists this fleet's recent
+broadcasts (the last 50, in memory until the fleet restarts) with their receipts;
+click one to reopen its receipts. Through a canvas this relies on
 trusting the canvas's pages (a canvas forwards actions from agent-authored HTML);
 the fleet is meant for a single user.
 

@@ -5,6 +5,8 @@
 let endpoints = [];
 let updated = "waiting for data";
 let fleetId = null;
+let broadcasts = []; // this fleet's recent broadcasts (in memory on the fleet), newest first
+let tab = "endpoints";
 let socket = null;
 
 // The fleet sends UTC; show it in this machine's time zone, e.g. "updated Nov 23, 6:10:18 PM PST".
@@ -22,6 +24,10 @@ function apply(state) {
   endpoints = state.endpoints;
   updated = localTime(state.updated);
   fleetId = state.fleet || fleetId;
+  broadcasts = Array.isArray(state.broadcasts) ? state.broadcasts : broadcasts;
+  // Keep an open receipts modal current from the broadcast history.
+  const open = broadcasts.find((b) => b.broadcast === receipt);
+  if (open && $("receipts").open) showReceipts(open);
   render();
 }
 
@@ -104,8 +110,9 @@ function actions(e) {
 // keeps its current subscribers, such as this view.
 function removeOfflineButton() {
   const b = $("remove-offline");
-  const count = endpoints.filter((e) => e.status === "offline").length;
-  b.hidden = count === 0;
+  // Subscribers (e.g. this fleet's viewer) are kept, so they are not counted.
+  const count = endpoints.filter((e) => e.status === "offline" && !e.kept).length;
+  b.hidden = count === 0 || tab !== "endpoints";
   if (b.classList.contains("armed")) return;
   b.disabled = pending.has("remove_offline");
   b.textContent = b.disabled ? "Removing offline…" : `Remove all offline (${count})`;
@@ -155,7 +162,7 @@ function pickAllCell() {
 function composer() {
   // Drop selections that went offline or were removed.
   for (const id of selected) if (!endpoints.some((e) => e.id === id && selectable(e))) selected.delete(id);
-  $("broadcast-open").hidden = !canBroadcast() || selected.size === 0;
+  $("broadcast-open").hidden = !canBroadcast() || selected.size === 0 || tab !== "endpoints";
   $("broadcast-open").textContent = `Broadcast to ${selected.size}`;
 }
 
@@ -206,7 +213,41 @@ function showReceipts(status) {
   if (!$("receipts").open) $("receipts").showModal();
 }
 
+const STATUS = { sending: "sending…", pending: "waiting", acked: "received ✓", failed: "failed" };
+
+function renderBroadcasts() {
+  const list = $("broadcasts");
+  if (!broadcasts.length) return list.replaceChildren(el("div", { className: "empty" }, "No broadcasts yet (they are kept until the fleet restarts)"));
+  list.replaceChildren(...broadcasts.map((b) => {
+    const acked = b.sessions.filter((s) => s.status === "acked").length;
+    const item = el("div", { className: "bc", tabIndex: 0 });
+    item.setAttribute("role", "button");
+    item.setAttribute("aria-label", `Receipts for: ${b.text.slice(0, 60)}`);
+    const meta = el("div", { className: "meta" });
+    meta.append(el("span", {}, localTime(b.sent_at).replace(/^updated /, "")), el("span", {}, `${acked} of ${b.sessions.length} acknowledged`));
+    const who = el("div", { className: "who" });
+    who.append(...b.sessions.map((s) => el("span", { className: `badge ${s.status}` }, `${s.name} · ${STATUS[s.status] || s.status}`)));
+    item.append(meta, el("div", { className: "text" }, b.text), who);
+    item.onclick = item.onkeydown = (ev) => {
+      if (ev.type === "keydown" && ev.key !== "Enter") return;
+      receipt = b.broadcast;
+      showReceipts(b);
+    };
+    return item;
+  }));
+}
+
+for (const name of ["endpoints", "broadcasts"]) {
+  $(`tab-${name}`).onclick = () => { tab = name; render(); };
+}
+
 function render() {
+  for (const name of ["endpoints", "broadcasts"]) $(`tab-${name}`).setAttribute("aria-selected", tab === name);
+  $("tab-broadcasts").replaceChildren("Broadcasts", ...(broadcasts.length ? [el("span", { className: "count" }, broadcasts.length)] : []));
+  document.querySelectorAll(".ep-only").forEach((n) => (n.hidden = tab !== "endpoints"));
+  $("endpoints-table").hidden = tab !== "endpoints";
+  $("broadcasts").hidden = tab !== "broadcasts";
+  renderBroadcasts();
   stats(); chips(); removeOfflineButton(); composer();
   $("updated").textContent = updated;
   $("head").replaceChildren(pickAllCell(), ...cols.map((c) => {

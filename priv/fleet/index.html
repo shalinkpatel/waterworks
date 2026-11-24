@@ -19,6 +19,7 @@
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; font: 14px/1.45 Inter, system-ui, sans-serif; color: var(--text); background: var(--bg); transition: background .2s, color .2s; }
   header { background: var(--header); color: #fff; padding: 22px 28px; display: flex; align-items: baseline; gap: 14px; border-bottom: 1px solid var(--border); }
   header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
@@ -35,6 +36,17 @@
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
   .toolbar { display: flex; gap: 18px; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .toolbar h2 { margin: 0 auto 0 0; font-size: 15px; }
+  .tabs { display: flex; gap: 4px; margin-right: auto; }
+  .tab { border: 0; background: transparent; color: var(--muted); font: 600 15px Inter, sans-serif; padding: 6px 12px;
+         border-radius: 8px; cursor: pointer; }
+  .tab[aria-selected="true"] { color: var(--text); background: var(--subtle); }
+  .tab .count { font: 500 11px "IBM Plex Mono", monospace; color: var(--faint); margin-left: 4px; }
+  .bc { padding: 14px 18px; border-top: 1px solid var(--border); cursor: pointer; }
+  .bc:first-child { border-top: 0; }
+  .bc:hover { background: var(--subtle); }
+  .bc .meta { display: flex; justify-content: space-between; font: 12px "IBM Plex Mono", monospace; color: var(--muted); margin-bottom: 6px; }
+  .bc .text { white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 8px; }
+  .bc .who { display: flex; gap: 6px; flex-wrap: wrap; }
   .group { display: flex; gap: 6px; align-items: center; }
   .group > span { font: 11px "IBM Plex Mono", monospace; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
   .chip { border: 1px solid var(--border); background: var(--subtle); border-radius: 999px; padding: 4px 11px; font: 500 12px Inter, sans-serif; cursor: pointer; color: var(--text); }
@@ -97,18 +109,22 @@
   <section class="stats" id="stats"></section>
   <section class="card">
     <div class="toolbar">
-      <h2>Endpoints</h2>
-      <div class="group" data-filter="kind"><span>Kind</span></div>
-      <div class="group" data-filter="type"><span>Type</span></div>
-      <div class="group" data-filter="status"><span>Status</span></div>
-      <input id="q" type="search" placeholder="Search name, id" aria-label="Search endpoints">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" id="tab-endpoints" aria-selected="true" type="button">Endpoints</button>
+        <button class="tab" role="tab" id="tab-broadcasts" aria-selected="false" type="button">Broadcasts</button>
+      </div>
+      <div class="group ep-only" data-filter="kind"><span>Kind</span></div>
+      <div class="group ep-only" data-filter="type"><span>Type</span></div>
+      <div class="group ep-only" data-filter="status"><span>Status</span></div>
+      <input id="q" class="ep-only" type="search" placeholder="Search name, id" aria-label="Search endpoints">
       <button id="broadcast-open" class="primary" type="button" hidden></button>
       <button id="remove-offline" class="remove" type="button" hidden></button>
     </div>
-    <table>
+    <table id="endpoints-table" role="tabpanel" aria-labelledby="tab-endpoints">
       <thead><tr id="head"></tr></thead>
       <tbody id="rows"></tbody>
     </table>
+    <div id="broadcasts" role="tabpanel" aria-labelledby="tab-broadcasts" hidden></div>
   </section>
 </main>
 <dialog id="compose" aria-labelledby="compose-title">

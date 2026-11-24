@@ -144,12 +144,15 @@ defmodule Ww.Fleet do
   defp poll(state) do
     state = refresh_broadcasts(state)
     endpoints = endpoints(state)
-    current = rows(endpoints)
+    rows = rows(endpoints, state.subscribers)
+    history = history(state.broadcasts)
+    current = {rows, history}
     targets = if current != state.last, do: Map.keys(state.subscribers), else: state.fresh
 
     payload = %{
       fleet: state.id,
-      endpoints: current,
+      endpoints: rows,
+      broadcasts: history,
       # UTC ISO 8601; each view shows it in its own local time zone.
       updated: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     }
@@ -205,14 +208,16 @@ defmodule Ww.Fleet do
       {:remove_all, ids} ->
         removed = Enum.count(ids, &remove(state, &1))
         IO.puts(:stderr, "removed #{removed} offline endpoint(s)")
-        if removed > 0, do: poll(state), else: state
+
+        # Always answer the requester, so its "Removing…" state clears even if nothing was removed.
+        poll(%{state | fresh: [message["from"] | state.fresh]})
 
       {:shutdown, id} ->
         request_shutdown(state, id, message["from"])
         state
 
       {:broadcast, ids, text} ->
-        broadcast(state, message, ids, text)
+        state |> broadcast(message, ids, text) |> poll()
 
       :exit ->
         exit_fleet(state, message["from"])
@@ -305,7 +310,8 @@ defmodule Ww.Fleet do
       to: request["from"],
       text: text,
       sessions: sessions,
-      started: System.monotonic_time(:second)
+      started: System.monotonic_time(:second),
+      sent_at: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     }
 
     report_broadcast(state, tracked)
@@ -314,19 +320,41 @@ defmodule Ww.Fleet do
 
   # Called every poll: re-reads pending sends and reports changes. Gives up after 10 minutes
   # (a session that never acknowledges stays "pending" in the view).
+  # Broadcasts are kept in memory (the last 50) for the view's Broadcasts tab; they are gone
+  # when the fleet restarts. Pending receipts are re-checked for 10 minutes.
   defp refresh_broadcasts(state) do
     broadcasts =
-      for {id, b} <- state.broadcasts,
-          System.monotonic_time(:second) - b.started < 600,
-          Enum.any?(b.sessions, &(&1.status == "pending")),
-          into: %{} do
-        sessions = Enum.map(b.sessions, &refresh_session(state, &1))
-        updated = %{b | sessions: sessions}
-        if sessions != b.sessions, do: report_broadcast(state, updated)
-        {id, updated}
-      end
+      state.broadcasts
+      |> Enum.sort_by(fn {_id, b} -> -b.started end)
+      |> Enum.take(50)
+      |> Map.new(fn {id, b} ->
+        if System.monotonic_time(:second) - b.started < 600 and
+             Enum.any?(b.sessions, &(&1.status == "pending")) do
+          sessions = Enum.map(b.sessions, &refresh_session(state, &1))
+          updated = %{b | sessions: sessions}
+          if sessions != b.sessions, do: report_broadcast(state, updated)
+          {id, updated}
+        else
+          {id, b}
+        end
+      end)
 
     %{state | broadcasts: broadcasts}
+  end
+
+  @doc "Broadcast history for views, newest first."
+  def history(broadcasts) do
+    broadcasts
+    |> Map.values()
+    |> Enum.sort_by(&(-&1.started))
+    |> Enum.map(fn b ->
+      %{
+        broadcast: b.id,
+        text: b.text,
+        sent_at: b.sent_at,
+        sessions: Enum.map(b.sessions, &Map.take(&1, [:id, :name, :status]))
+      }
+    end)
   end
 
   defp refresh_session(state, %{status: "pending"} = session) do
@@ -505,7 +533,7 @@ defmodule Ww.Fleet do
       )
 
   @doc "Page rows for every endpoint, in a stable order."
-  def rows(endpoints) do
+  def rows(endpoints, subscribers \\ %{}) do
     endpoints
     |> Enum.map(fn e ->
       %{
@@ -514,7 +542,9 @@ defmodule Ww.Fleet do
         type: type(e),
         status: if(e["online"], do: "online", else: "offline"),
         id: e["id"],
-        cwd: get_in(e, ["metadata", "cwd"]) || ""
+        cwd: get_in(e, ["metadata", "cwd"]) || "",
+        # Subscribers (e.g. this fleet's viewer) are never cleared by "Remove all offline".
+        kept: Map.has_key?(subscribers, e["id"])
       }
     end)
     |> Enum.sort_by(& &1.id)
